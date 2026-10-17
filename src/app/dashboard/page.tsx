@@ -127,6 +127,20 @@ export default function DashboardPage() {
     { name: string; option_value: string; price_modifier: number }[]
   >([]);
 
+  // Barcode / Open Food Facts Auto-Lookup State in Product Modal
+  const [isLookingUpBarcode, setIsLookingUpBarcode] = useState(false);
+  const [lookupFeedback, setLookupFeedback] = useState<{
+    found: boolean;
+    name?: string;
+    brand?: string;
+    suggestedPrice?: number;
+    source?: string;
+  } | null>(null);
+  const [barcodeSearchQuery, setBarcodeSearchQuery] = useState('');
+  const [barcodeSearchResults, setBarcodeSearchResults] = useState<any[]>([]);
+  const [isSearchingByName, setIsSearchingByName] = useState(false);
+  const [showNameSearch, setShowNameSearch] = useState(false);
+
   // POS State
   type POSItem = { product: TenantProduct; quantity: number };
   const [posCart, setPosCart] = useState<POSItem[]>([]);
@@ -434,10 +448,108 @@ export default function DashboardPage() {
       is_active: true,
       card_condition: 'NM',
       description: globalItem?.description || '',
+      image_url: globalItem?.image_url || '',
     });
     setHasVariations(false);
     setTempVariations([]);
+    setLookupFeedback(
+      globalItem
+        ? {
+            found: true,
+            name: globalItem.name,
+            suggestedPrice: globalItem.suggested_price,
+            source: 'Catálogo Maestro',
+          }
+        : null
+    );
+    setBarcodeSearchQuery('');
+    setBarcodeSearchResults([]);
+    setShowNameSearch(false);
     setIsProductModalOpen(true);
+  };
+
+  const handleLookupBarcode = async (barcodeToSearch?: string) => {
+    const code = (barcodeToSearch || editingProduct?.barcode || '').trim();
+    if (!code) return;
+    setIsLookingUpBarcode(true);
+    setLookupFeedback(null);
+    try {
+      const res = await fetch(`/api/products/barcode-lookup?barcode=${encodeURIComponent(code)}`);
+      const data = await res.json();
+      if (data.found && data.product) {
+        playBeep('success');
+        setEditingProduct((prev) => ({
+          ...prev,
+          barcode: data.product.barcode,
+          name: data.product.name,
+          category: data.product.category,
+          image_url: data.product.image_url,
+          price: data.product.suggested_price || prev?.price || 20,
+          cost_price: data.product.cost_price || 0,
+          description: data.product.description,
+        }));
+        setLookupFeedback({
+          found: true,
+          name: data.product.name,
+          brand: data.product.brand,
+          suggestedPrice: data.product.suggested_price,
+          source: data.source === 'open_food_facts' ? 'Open Food Facts (Base Mundial)' : 'Catálogo Curado TCG',
+        });
+      } else {
+        setLookupFeedback({
+          found: false,
+        });
+      }
+    } catch (err) {
+      console.error('Barcode lookup failed:', err);
+      setLookupFeedback({ found: false });
+    } finally {
+      setIsLookingUpBarcode(false);
+    }
+  };
+
+  const handleSearchByName = async (q: string) => {
+    setBarcodeSearchQuery(q);
+    if (!q.trim()) {
+      setBarcodeSearchResults([]);
+      return;
+    }
+    setIsSearchingByName(true);
+    try {
+      const res = await fetch(`/api/products/barcode-lookup?query=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if (data.results) {
+        setBarcodeSearchResults(data.results);
+      }
+    } catch (err) {
+      console.error('Search by name failed:', err);
+    } finally {
+      setIsSearchingByName(false);
+    }
+  };
+
+  const handleSelectSearchResult = (prod: any) => {
+    playBeep('success');
+    setEditingProduct((prev) => ({
+      ...prev,
+      barcode: prod.barcode,
+      name: prod.name,
+      category: prod.category,
+      image_url: prod.image_url,
+      price: prod.suggested_price || prev?.price || 20,
+      cost_price: prod.cost_price || 0,
+      description: prod.description,
+    }));
+    setLookupFeedback({
+      found: true,
+      name: prod.name,
+      brand: prod.brand,
+      suggestedPrice: prod.suggested_price,
+      source: 'Open Food Facts',
+    });
+    setBarcodeSearchResults([]);
+    setBarcodeSearchQuery('');
+    setShowNameSearch(false);
   };
 
   const handleSaveProduct = (e: React.FormEvent) => {
@@ -2888,41 +3000,200 @@ export default function DashboardPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Código de Barras</label>
-                  <input
-                    type="text"
-                    value={editingProduct.barcode || ''}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, barcode: e.target.value })
-                    }
-                    placeholder="Ej. 0820650853412"
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono"
-                  />
+              {/* Código de barras y Autocompletar con API */}
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-slate-700 dark:text-slate-300 font-semibold">
+                        Código de Barras
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowNameSearch(!showNameSearch)}
+                        className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Search className="w-2.5 h-2.5" />
+                        {showNameSearch ? 'Cerrar buscador' : 'Buscar por nombre'}
+                      </button>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={editingProduct.barcode || ''}
+                        onChange={(e) =>
+                          setEditingProduct({ ...editingProduct, barcode: e.target.value })
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleLookupBarcode();
+                          }
+                        }}
+                        placeholder="Ej. 7501011143586 o escanear"
+                        className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono text-xs"
+                      />
+                      <button
+                        type="button"
+                        disabled={isLookingUpBarcode || !editingProduct.barcode}
+                        onClick={() => handleLookupBarcode()}
+                        className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-bold flex items-center gap-1 transition cursor-pointer text-xs shrink-0"
+                        title="Buscar información e imagen en Open Food Facts"
+                      >
+                        {isLookingUpBarcode ? (
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>API</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Escanea con pistola USB o pulsa Enter para autocompletar
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Categoría *</label>
+                    <select
+                      value={editingProduct.category || 'tcg_single'}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          category: e.target.value as ProductCategory,
+                        })
+                      }
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white cursor-pointer"
+                    >
+                      <option value="snack">Cafetería & Snacks (Sabritas, etc.)</option>
+                      <option value="beverage">Bebidas & Refrescos (Coca-Cola, etc.)</option>
+                      <option value="tcg_single">Singles TCG (Cartas sueltas)</option>
+                      <option value="tcg_sealed">Producto Sellado / Sobres & Cajas</option>
+                      <option value="accessory">Accesorios (Tapetes, Micas, Dados)</option>
+                      <option value="board_game">Juegos de Mesa</option>
+                      <option value="apparel">Ropa & Mochilas</option>
+                      <option value="poster">Pósters de Colección</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Categoría *</label>
-                  <select
-                    value={editingProduct.category || 'tcg_single'}
-                    onChange={(e) =>
-                      setEditingProduct({
-                        ...editingProduct,
-                        category: e.target.value as ProductCategory,
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white cursor-pointer"
-                  >
-                    <option value="tcg_single">Singles TCG (Cartas sueltas)</option>
-                    <option value="tcg_sealed">Producto Sellado / Sobres & Cajas</option>
-                    <option value="accessory">Accesorios (Tapetes, Micas, Dados)</option>
-                    <option value="board_game">Juegos de Mesa</option>
-                    <option value="apparel">Ropa & Mochilas</option>
-                    <option value="poster">Pósters de Colección</option>
-                    <option value="snack">Cafetería & Snacks</option>
-                    <option value="beverage">Bebidas & Refrescos</option>
-                  </select>
-                </div>
+
+                {/* Buscador por Nombre en Catálogo Mundial / Open Food Facts */}
+                {showNameSearch && (
+                  <div className="p-3 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-xl space-y-2 animate-fade-in">
+                    <span className="text-[11px] font-bold text-blue-900 dark:text-blue-300 flex items-center gap-1.5">
+                      <Search className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      Buscador Global de Productos (Open Food Facts):
+                    </span>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={barcodeSearchQuery}
+                        onChange={(e) => handleSearchByName(e.target.value)}
+                        placeholder="Ej. Sabritas Limón, Cheetos, Coca Cola 3L, Doritos..."
+                        className="flex-1 px-3 py-1.5 bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 rounded-lg text-slate-900 dark:text-white text-xs"
+                      />
+                      {isSearchingByName && (
+                        <div className="flex items-center px-2">
+                          <span className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Quick suggestion chips */}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {[
+                        { label: 'Cheetos 58g', code: '7501011143586' },
+                        { label: 'Sabritas Limón', code: '7501011101678' },
+                        { label: 'Coca-Cola 3L', code: '7501055304745' },
+                        { label: 'Coca-Cola Zero', code: '7501055320639' },
+                        { label: 'Doritos Nacho', code: '7501011123588' },
+                      ].map((chip) => (
+                        <button
+                          key={chip.code}
+                          type="button"
+                          onClick={() => handleLookupBarcode(chip.code)}
+                          className="px-2 py-0.5 bg-white dark:bg-slate-900 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded text-[10px] font-semibold transition cursor-pointer"
+                        >
+                          + {chip.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Results list */}
+                    {barcodeSearchResults.length > 0 && (
+                      <div className="max-h-44 overflow-y-auto space-y-1.5 pt-1 pr-1">
+                        {barcodeSearchResults.map((prod) => (
+                          <div
+                            key={prod.barcode}
+                            onClick={() => handleSelectSearchResult(prod)}
+                            className="p-2 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950/60 border border-slate-200 dark:border-slate-800 hover:border-blue-300 rounded-lg flex items-center justify-between cursor-pointer transition"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              {prod.image_url ? (
+                                <img
+                                  src={prod.image_url}
+                                  alt=""
+                                  className="w-8 h-8 object-contain rounded bg-slate-50 shrink-0"
+                                />
+                              ) : (
+                                <div className="w-8 h-8 rounded bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 shrink-0">
+                                  <Barcode className="w-4 h-4" />
+                                </div>
+                              )}
+                              <div className="truncate">
+                                <p className="font-bold text-slate-900 dark:text-white text-xs truncate">
+                                  {prod.name}
+                                </p>
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {prod.barcode} • {prod.brand || 'General'}
+                                </span>
+                              </div>
+                            </div>
+                            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0 pl-2">
+                              ${prod.suggested_price?.toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Feedback Banner when found or not found */}
+                {lookupFeedback && (
+                  <div>
+                    {lookupFeedback.found ? (
+                      <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/30 rounded-xl flex items-start gap-3 animate-fade-in">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                        <div className="flex-1 text-xs">
+                          <div className="flex items-center gap-2">
+                            <strong className="text-emerald-900 dark:text-emerald-200 font-bold">
+                              ¡Producto Encontrado!
+                            </strong>
+                            <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 rounded font-semibold">
+                              {lookupFeedback.source}
+                            </span>
+                          </div>
+                          <p className="text-emerald-800 dark:text-emerald-300 mt-0.5">
+                            Se autocompletaron el nombre, la categoría y la imagen oficial del producto.
+                          </p>
+                          {lookupFeedback.suggestedPrice && (
+                            <p className="text-slate-600 dark:text-slate-300 mt-1 font-medium">
+                              Precio sugerido: <strong className="text-emerald-600 dark:text-emerald-400">${lookupFeedback.suggestedPrice.toFixed(2)} MXN</strong> (puedes ajustar el precio final abajo).
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-500/30 rounded-xl flex items-center gap-2 text-xs text-amber-800 dark:text-amber-300 animate-fade-in">
+                        <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                        <span>Código no encontrado en el catálogo mundial. Puedes registrarlo manualmente.</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {editingProduct.category === 'tcg_single' && (
@@ -2978,17 +3249,25 @@ export default function DashboardPage() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Precio Venta ($) *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Precio Venta ($) *</label>
+                    {lookupFeedback?.suggestedPrice && (
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+                        Sugerido: ${lookupFeedback.suggestedPrice.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="number"
                     step="0.5"
                     required
                     value={editingProduct.price ?? ''}
                     onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, price: parseFloat(e.target.value) })
+                      setEditingProduct({ ...editingProduct, price: parseFloat(e.target.value) || 0 })
                     }
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono font-bold"
                   />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">Precio libre de la tienda</span>
                 </div>
                 <div>
                   <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Precio Costo ($)</label>
@@ -3090,9 +3369,9 @@ export default function DashboardPage() {
                 />
               </div>
 
-              <div>
-                <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">
-                  URL de Imagen (Opcional)
+              <div className="space-y-2">
+                <label className="text-slate-700 dark:text-slate-300 block font-semibold">
+                  URL de Imagen (Autocompletada por API u opcional)
                 </label>
                 <input
                   type="url"
@@ -3103,6 +3382,27 @@ export default function DashboardPage() {
                   placeholder="https://..."
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono text-[11px]"
                 />
+
+                {editingProduct.image_url && (
+                  <div className="flex items-center gap-3 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 animate-fade-in">
+                    <div className="w-14 h-14 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden flex items-center justify-center relative shrink-0">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={editingProduct.image_url}
+                        alt={editingProduct.name || 'Preview'}
+                        className="w-full h-full object-contain p-1"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 block uppercase tracking-wider">
+                        Foto Oficial Vinculada
+                      </span>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
+                        {editingProduct.name || 'Producto'}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Variations section for Snacks/Cafeteria */}

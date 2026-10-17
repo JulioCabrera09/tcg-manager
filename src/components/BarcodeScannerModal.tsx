@@ -94,16 +94,46 @@ export default function BarcodeScannerModal({
     }
   };
 
-  const handleCodeDetected = (code: string) => {
+  const [isSearchingBarcode, setIsSearchingBarcode] = useState(false);
+
+  const handleCodeDetected = async (code: string) => {
     const cleanCode = code.trim();
     if (!cleanCode) return;
 
     playBeep('success');
 
     const matchedProduct = dataStore.getProductByBarcode(tenantId, cleanCode);
-    const matchedGlobal = !matchedProduct
+    let matchedGlobal = !matchedProduct
       ? dataStore.getGlobalProductByBarcode(cleanCode)
       : undefined;
+
+    // Si no está en inventario ni catálogo local, consultar la API de Open Food Facts
+    if (!matchedProduct && !matchedGlobal) {
+      setIsSearchingBarcode(true);
+      try {
+        const res = await fetch(`/api/products/barcode-lookup?barcode=${encodeURIComponent(cleanCode)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.found && data.product) {
+            matchedGlobal = {
+              id: `glob-${cleanCode}`,
+              barcode: cleanCode,
+              name: data.product.name,
+              category: data.product.category,
+              image_url: data.product.image_url,
+              suggested_price: data.product.suggested_price,
+              description: data.product.description,
+            };
+            // Guardarlo en el catálogo global local para futuras consultas instantáneas
+            dataStore.addGlobalProduct(matchedGlobal);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching barcode from API:', err);
+      } finally {
+        setIsSearchingBarcode(false);
+      }
+    }
 
     setLastScanned({
       code: cleanCode,
@@ -236,11 +266,11 @@ export default function BarcodeScannerModal({
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {[
+                    { code: '7501011143586', label: 'Cheetos Torciditos' },
+                    { code: '7501011101678', label: 'Sabritas Limón' },
+                    { code: '7501055304745', label: 'Coca-Cola 3L' },
                     { code: '0820650853412', label: 'Sobre Pokémon' },
-                    { code: 'TCG-POK-CHARIZARD', label: 'Charizard SIR' },
-                    { code: '7501055312345', label: 'Coca-Cola' },
                     { code: '0744278453219', label: 'Micas Dragon Shield' },
-                    { code: 'CAFE-BURGER-01', label: 'Hamburguesa Smash' },
                   ].map((test) => (
                     <button
                       key={test.code}
@@ -254,6 +284,14 @@ export default function BarcodeScannerModal({
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Searching Barcode in Open Food Facts indicator */}
+          {isSearchingBarcode && (
+            <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-xl flex items-center gap-2.5 text-xs text-blue-700 dark:text-blue-300">
+              <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              <span>Consultando base de datos mundial de códigos de barra (Open Food Facts)...</span>
             </div>
           )}
 
