@@ -189,6 +189,11 @@ export interface Order {
   payment_method: 'cash_on_pickup' | 'cash' | 'card' | 'transfer';
   subtotal: number;
   total: number;
+  discount_amount?: number;
+  discount_percent?: number;
+  amount_paid?: number;
+  change_given?: number;
+  cashier_name?: string;
   notes?: string;
   items?: OrderItem[];
   created_at: string;

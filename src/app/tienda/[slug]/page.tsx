@@ -30,6 +30,9 @@ import {
   Camera,
   Paperclip,
   Eye,
+  Package,
+  Coffee,
+  Layers,
 } from 'lucide-react';
 import Footer from '@/components/Footer';
 import { dataStore } from '@/lib/store';
@@ -322,6 +325,40 @@ export default function TenantStorefrontPage({
     }, 1200);
   };
 
+  const getWhatsAppOrderLink = (order: Order) => {
+    if (!tenant?.whatsapp) return '#';
+    const cleanPhone = tenant.whatsapp.replace(/[^0-9]/g, '');
+    const itemsText = order.items
+      ?.map((i) => `• ${i.quantity}x ${i.product_name} - $${i.subtotal.toFixed(2)} MXN`)
+      .join('\n');
+
+    const deliveryText =
+      order.delivery_type === 'shipping'
+        ? `📦 Envío a Domicilio\n📍 Dirección: ${order.shipping_address || 'No especificada'}`
+        : `🏪 Recoger y Pagar en Sucursal (${tenant.address || 'Mostrador'})`;
+
+    const msg = [
+      `¡Hola, ${tenant.name}! 👋 Acabo de generar un pedido desde su vitrina web en línea:`,
+      ``,
+      `*Folio:* ${order.reservation_code}`,
+      `*Cliente:* ${order.customer_name}`,
+      `*Teléfono:* ${order.customer_phone}`,
+      `*Modalidad:* ${deliveryText}`,
+      ``,
+      `*Artículos solicitados:*`,
+      itemsText,
+      ``,
+      `*TOTAL A LIQUIDAR:* $${order.total.toFixed(2)} MXN`,
+      order.notes ? `*Notas adicionales:* ${order.notes}` : '',
+      ``,
+      `¿Podrían confirmarme la disponibilidad para pasar a recoger / datos bancarios? ¡Muchas gracias! 🙌`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200">
       {/* Top Banner / Store Header - Solid colors, no gradients */}
@@ -443,60 +480,94 @@ export default function TenantStorefrontPage({
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-10">
         {/* Navigation Tabs within Store */}
-        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4 gap-3">
           <div className="flex items-center gap-2">
             <Tag className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             <h2 className="text-xl font-black text-slate-900 dark:text-white">Catálogo de Productos y Cartas</h2>
             <span className="text-xs text-slate-500 dark:text-slate-400 ml-1">({filteredProducts.length} disponibles)</span>
           </div>
-          <span className="text-xs text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-3 py-1 rounded-full font-medium">
+          <span className="text-xs text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 px-3 py-1 rounded-full font-medium self-start sm:self-auto">
             Reserva en línea • Paga al recoger en mostrador
           </span>
         </div>
 
-        {/* Filter Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        {/* Category Pills Bar (Audio Feedback) */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+          {[
+            { id: 'all', label: 'Todo el Catálogo', icon: Sparkles },
+            { id: 'tcg_single', label: 'Singles / Cartas', icon: Layers },
+            { id: 'tcg_sealed', label: 'Producto Sellado', icon: Package },
+            { id: 'accessory', label: 'Accesorios & Micas', icon: ShieldCheck },
+            { id: 'snack', label: 'Cafetería & Botanas', icon: Coffee },
+            { id: 'beverage', label: 'Bebidas & Refrescos', icon: Coffee },
+          ].map((cat) => {
+            const Icon = cat.icon;
+            const active = selectedCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+                  active
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:border-blue-400'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {cat.label}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.getElementById('tournaments-section');
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-300/60 dark:border-amber-800 transition cursor-pointer"
+          >
+            <Trophy className="w-3.5 h-3.5" />
+            Torneos & Eventos
+          </button>
+        </div>
+
+        {/* Search & TCG Game Bar */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 bg-white dark:bg-slate-900 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
           {/* Search bar */}
-          <div className="md:col-span-5 relative">
+          <div className="md:col-span-8 relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por nombre, código de barras o set..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-600 font-medium"
+              placeholder="Buscar por nombre, código de carta (ej. LOB-S005), set o botana..."
+              className="w-full pl-9 pr-8 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-600 font-medium"
             />
-          </div>
-
-          {/* Category filter */}
-          <div className="md:col-span-4">
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 font-medium cursor-pointer"
-            >
-              <option value="all">Todas las Categorías</option>
-              <option value="tcg_single">Cartas Sueltas (Singles)</option>
-              <option value="tcg_sealed">Producto Sellado (Sobres / Cajas)</option>
-              <option value="accessory">Accesorios (Micas, Cajas, Playmats)</option>
-              <option value="snack">Cafetería & Botanas</option>
-              <option value="beverage">Bebidas & Refrescos</option>
-            </select>
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* TCG Game filter */}
-          <div className="md:col-span-3">
+          <div className="md:col-span-4">
             <select
               value={selectedGame}
               onChange={(e) => setSelectedGame(e.target.value)}
               className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-600 font-medium cursor-pointer"
             >
-              <option value="all">Todos los Juegos TCG</option>
-              <option value="Pokemon">Pokémon TCG</option>
-              <option value="Magic">Magic: The Gathering</option>
-              <option value="Yu-Gi-Oh!">Yu-Gi-Oh!</option>
-              <option value="One Piece">One Piece Card Game</option>
-              <option value="Lorcana">Disney Lorcana</option>
+              <option value="all">🎮 Todos los Juegos TCG</option>
+              <option value="Pokemon">⚡ Pokémon TCG</option>
+              <option value="Magic">🧙 Magic: The Gathering</option>
+              <option value="Yu-Gi-Oh!">⚔️ Yu-Gi-Oh!</option>
+              <option value="One Piece">🏴‍☠️ One Piece Card Game</option>
+              <option value="Lorcana">✨ Disney Lorcana</option>
             </select>
           </div>
         </div>
@@ -615,7 +686,7 @@ export default function TenantStorefrontPage({
         )}
 
         {/* Tournaments Section (Audio 1 & Audio 4) */}
-        <section className="pt-8 border-t border-slate-200 dark:border-slate-800 space-y-5">
+        <section id="tournaments-section" className="pt-8 border-t border-slate-200 dark:border-slate-800 space-y-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
@@ -1193,16 +1264,29 @@ export default function TenantStorefrontPage({
               Muestra este código al llegar a mostrador para que te entreguen tu pedido de inmediato.
             </p>
 
-            <button
-              type="button"
-              onClick={() => {
-                setCreatedOrder(null);
-                setIsCartOpen(false);
-              }}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
-            >
-              Entendido, Cerrar
-            </button>
+            <div className="space-y-2 pt-2">
+              {tenant.whatsapp && (
+                <a
+                  href={getWhatsAppOrderLink(createdOrder)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  Enviar Pedido al WhatsApp de la Tienda
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setCreatedOrder(null);
+                  setIsCartOpen(false);
+                }}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Cerrar y Continuar Explorando
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1227,17 +1311,31 @@ export default function TenantStorefrontPage({
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsDirectChatOpen(false);
-                  setCreatedOrder(null);
-                  setIsCartOpen(false);
-                }}
-                className="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 rounded-lg cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {tenant.whatsapp && (
+                  <a
+                    href={getWhatsAppOrderLink(createdOrder)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    title="Enviar pedido por WhatsApp"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">WhatsApp</span>
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDirectChatOpen(false);
+                    setCreatedOrder(null);
+                    setIsCartOpen(false);
+                  }}
+                  className="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 rounded-lg cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Order Brief Pill */}

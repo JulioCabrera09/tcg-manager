@@ -41,6 +41,7 @@ import {
   Tag,
   MapPin,
   Printer,
+  Receipt,
   Play,
   Pause,
   RotateCcw,
@@ -66,6 +67,8 @@ import { dataStore } from '@/lib/store';
 import { playBeep } from '@/lib/audio';
 import BarcodeScannerModal from '@/components/BarcodeScannerModal';
 import RegisterStoreModal from '@/components/RegisterStoreModal';
+import TicketModal from '@/components/TicketModal';
+import CorteCajaModal from '@/components/CorteCajaModal';
 import { sanitizeMexicanPhone, isValidMexicanPhone, hashPassword } from '@/lib/security';
 import { useStoreRealtime } from '@/lib/supabase/useRealtime';
 import {
@@ -145,6 +148,17 @@ export default function DashboardPage() {
   type POSItem = { product: TenantProduct; quantity: number };
   const [posCart, setPosCart] = useState<POSItem[]>([]);
   const [posPaymentMethod, setPosPaymentMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
+  const [posSearchQuery, setPosSearchQuery] = useState('');
+  const [posCategoryFilter, setPosCategoryFilter] = useState<string>('all');
+  const [posCustomerName, setPosCustomerName] = useState('Público General');
+  const [posCustomerPhone, setPosCustomerPhone] = useState('');
+  const [posDiscountType, setPosDiscountType] = useState<'none' | 'percent' | 'fixed'>('none');
+  const [posDiscountValue, setPosDiscountValue] = useState<number>(0);
+  const [posCashReceived, setPosCashReceived] = useState<string>('');
+  const [selectedTicketForModal, setSelectedTicketForModal] = useState<Order | null>(null);
+  const [isCorteCajaOpen, setIsCorteCajaOpen] = useState(false);
+  const [isLoadReservationOpen, setIsLoadReservationOpen] = useState(false);
+  const [loadedReservationId, setLoadedReservationId] = useState<string | null>(null);
   const [posSuccessTicket, setPosSuccessTicket] = useState<{
     code: string;
     total: number;
@@ -665,59 +679,96 @@ export default function DashboardPage() {
     });
   };
 
-  const posTotal = posCart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const posSubtotal = posCart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const posDiscountAmount =
+    posDiscountType === 'percent'
+      ? (posSubtotal * Math.min(100, Math.max(0, posDiscountValue))) / 100
+      : posDiscountType === 'fixed'
+      ? Math.min(posSubtotal, Math.max(0, posDiscountValue))
+      : 0;
+  const posTotal = Math.max(0, posSubtotal - posDiscountAmount);
+  const posCashAmount = parseFloat(posCashReceived) || 0;
+  const posChangeDue = posCashAmount >= posTotal ? posCashAmount - posTotal : 0;
+
+  const filteredPosProducts = products.filter((p) => {
+    if (!p.is_active) return false;
+    if (posCategoryFilter !== 'all' && p.category !== posCategoryFilter) return false;
+    if (posSearchQuery.trim()) {
+      const q = posSearchQuery.toLowerCase();
+      const matchName = p.name.toLowerCase().includes(q);
+      const matchBarcode = p.barcode?.toLowerCase().includes(q);
+      const matchSet = p.card_set?.toLowerCase().includes(q);
+      const matchGame = p.tcg_game?.toLowerCase().includes(q);
+      if (!matchName && !matchBarcode && !matchSet && !matchGame) return false;
+    }
+    return true;
+  });
 
   const handleCompletePosSale = () => {
     if (posCart.length === 0) return;
 
-    const saleCode = `POS-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newOrder: Order = {
-      id: `ord-pos-${Date.now()}`,
-      tenant_id: currentTenantId,
-      reservation_code: saleCode,
-      customer_name: 'Venta Mostrador',
-      customer_phone: 'N/A',
-      order_type: 'pos_direct',
-      status: 'completed',
-      payment_method: posPaymentMethod,
-      subtotal: posTotal,
-      total: posTotal,
-      items: posCart.map((i) => ({
-        id: `pos-item-${Math.random().toString(36).substring(2, 7)}`,
-        order_id: '',
-        tenant_product_id: i.product.id,
-        product_name: i.product.name,
-        quantity: i.quantity,
-        unit_price: i.product.price,
-        subtotal: i.product.price * i.quantity,
-      })),
-      created_at: new Date().toISOString(),
-    };
-
-    posCart.forEach((item) => {
-      const p = dataStore.getProductById(item.product.id);
-      if (p) {
-        dataStore.updateProduct({
-          id: p.id,
-          stock_quantity: Math.max(0, p.stock_quantity - item.quantity),
-        });
+    if (posPaymentMethod === 'cash') {
+      if (posCashAmount < posTotal && posTotal > 0) {
+        alert(
+          `El efectivo recibido ($${posCashAmount.toFixed(2)}) es menor al total a cobrar ($${posTotal.toFixed(2)}).`
+        );
+        return;
       }
+    }
+
+    const created = dataStore.createPosSale({
+      tenantId: currentTenantId,
+      customerName: posCustomerName.trim() || 'Público General',
+      customerPhone: posCustomerPhone.trim() || 'Mostrador',
+      paymentMethod: posPaymentMethod,
+      items: posCart.map((i) => ({ product: i.product, quantity: i.quantity })),
+      discountAmount: posDiscountAmount,
+      discountPercent: posDiscountType === 'percent' ? posDiscountValue : 0,
+      amountPaid: posPaymentMethod === 'cash' ? posCashAmount : posTotal,
+      changeGiven: posPaymentMethod === 'cash' ? posChangeDue : 0,
+      cashierName: currentUser?.name || 'Cajero en Turno',
+      notes: loadedReservationId ? `Cobro de Reserva Web (${loadedReservationId})` : undefined,
     });
 
-    dataStore.createReservation(
-      currentTenantId,
-      'Venta Mostrador',
-      'Mostrador',
-      posCart.map((i) => ({ product: i.product, quantity: i.quantity }))
-    );
+    if (loadedReservationId) {
+      try {
+        dataStore.updateOrderStatus(loadedReservationId, 'completed');
+      } catch {}
+    }
 
-    setPosSuccessTicket({
-      code: saleCode,
-      total: posTotal,
-      items: [...posCart],
-    });
+    playBeep('success');
+    setSelectedTicketForModal(created);
     setPosCart([]);
+    setPosCashReceived('');
+    setPosDiscountType('none');
+    setPosDiscountValue(0);
+    setPosCustomerName('Público General');
+    setPosCustomerPhone('');
+    setLoadedReservationId(null);
     refreshCurrentData();
+  };
+
+  const handleLoadReservationToPos = (resOrder: Order) => {
+    if (!resOrder.items || resOrder.items.length === 0) return;
+    const newItems: POSItem[] = [];
+    resOrder.items.forEach((item) => {
+      const prod = products.find((p) => p.id === item.tenant_product_id) || {
+        id: item.tenant_product_id || `temp-${Math.random()}`,
+        tenant_id: currentTenantId,
+        name: item.product_name,
+        price: item.unit_price,
+        stock_quantity: item.quantity,
+        category: 'tcg_single',
+        is_active: true,
+        created_at: new Date().toISOString(),
+      };
+      newItems.push({ product: prod, quantity: item.quantity });
+    });
+    setPosCart(newItems);
+    setPosCustomerName(resOrder.customer_name);
+    setPosCustomerPhone(resOrder.customer_phone || '');
+    setLoadedReservationId(resOrder.id);
+    setIsLoadReservationOpen(false);
   };
 
   const resetNewTournForm = () => {
@@ -1547,170 +1598,566 @@ export default function DashboardPage() {
         {/* TAB 2: PUNTO DE VENTA (POS) */}
         {/* ========================================================================= */}
         {activeTab === 'pos' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
-            {/* Left: Quick Item Selector & Scan */}
-            <div className="lg:col-span-7 space-y-4">
-              <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
-                <div className="flex items-center gap-2">
-                  <DollarSign className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Caja Registradora / POS</h3>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">Escanea o haz clic para agregar al ticket</p>
-                  </div>
+          <div className="space-y-6 animate-fade-in">
+            {/* Top Action Bar */}
+            <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shadow-xs">
+                  <DollarSign className="w-5 h-5" />
                 </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    Caja Registradora & Punto de Venta (POS)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Cajero en turno:{' '}
+                    <strong className="text-slate-700 dark:text-slate-300">
+                      {currentUser?.name || 'Administrador'}
+                    </strong>{' '}
+                    • Tienda: {currentTenant.name}
+                  </p>
+                </div>
+              </div>
 
+              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                {/* Button to load web reservations */}
+                <button
+                  type="button"
+                  onClick={() => setIsLoadReservationOpen(true)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                    orders.filter((o) => o.tenant_id === currentTenantId && o.status === 'pending_pickup').length > 0
+                      ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800 hover:bg-amber-100 animate-pulse'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200'
+                  }`}
+                  title="Cargar reservas web pendientes de clientes que vienen a recoger a tienda"
+                >
+                  <ShoppingBag className="w-4 h-4 text-amber-500" />
+                  <span>Cargar Reserva Web</span>
+                  {orders.filter((o) => o.tenant_id === currentTenantId && o.status === 'pending_pickup').length > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px] flex items-center justify-center ml-1">
+                      {orders.filter((o) => o.tenant_id === currentTenantId && o.status === 'pending_pickup').length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Corte de caja */}
+                <button
+                  type="button"
+                  onClick={() => setIsCorteCajaOpen(true)}
+                  className="px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  title="Abrir resumen y corte de caja del día"
+                >
+                  <Calendar className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Corte Diario / Z</span>
+                </button>
+
+                {/* Scanner button */}
                 <button
                   type="button"
                   onClick={() => setIsScannerOpen(true)}
                   className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
                 >
                   <Barcode className="w-4 h-4" />
-                  Escanear a Ticket
+                  <span>Escanear Código</span>
                 </button>
-              </div>
-
-              {/* Fast Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {products.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => addToPosCart(p)}
-                    className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 rounded-xl text-left transition cursor-pointer flex flex-col justify-between h-28 group shadow-xs hover:shadow-sm"
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 line-clamp-2">
-                        {p.name}
-                      </p>
-                      <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-                        Stock: {p.stock_quantity}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800">
-                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                        ${p.price.toFixed(2)}
-                      </span>
-                      <Plus className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600" />
-                    </div>
-                  </button>
-                ))}
               </div>
             </div>
 
-            {/* Right: Ticket Cart */}
-            <div className="lg:col-span-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex flex-col justify-between min-h-[480px] shadow-xs">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <ShoppingBag className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                    Ticket Actual
-                  </h4>
-                  {posCart.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setPosCart([])}
-                      className="text-[11px] text-rose-600 hover:underline cursor-pointer"
-                    >
-                      Limpiar
-                    </button>
-                  )}
-                </div>
-
-                {posCart.length === 0 ? (
-                  <div className="py-16 text-center text-slate-400 dark:text-slate-500 text-xs">
-                    El ticket está vacío. Escanea o selecciona artículos.
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                    {posCart.map((item) => (
-                      <div
-                        key={item.product.id}
-                        className="p-2.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs"
-                      >
-                        <div className="flex-1 min-w-0 pr-2">
-                          <p className="font-bold text-slate-900 dark:text-white truncate">{item.product.name}</p>
-                          <span className="text-slate-500 dark:text-slate-400 text-[10px]">
-                            ${item.product.price.toFixed(2)} c/u
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
-                          <button
-                            type="button"
-                            onClick={() => updatePosQty(item.product.id, -1)}
-                            className="p-1 hover:text-blue-600 text-slate-500 cursor-pointer"
-                          >
-                            -
-                          </button>
-                          <span className="font-bold text-slate-900 dark:text-white px-1">{item.quantity}</span>
-                          <button
-                            type="button"
-                            onClick={() => updatePosQty(item.product.id, 1)}
-                            className="p-1 hover:text-blue-600 text-slate-500 cursor-pointer"
-                          >
-                            +
-                          </button>
-                        </div>
-
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400 pl-3">
-                          ${(item.product.price * item.quantity).toFixed(2)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Bottom: Payment selector & total */}
-              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase">
-                    Método de Pago:
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { id: 'cash', label: 'Efectivo' },
-                      { id: 'card', label: 'Terminal / Tarjeta' },
-                      { id: 'transfer', label: 'Transferencia' },
-                    ].map((m) => (
+            {/* Main POS Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: Product Search, Category Filter, and Catalog */}
+              <div className="lg:col-span-7 space-y-4">
+                {/* Search Bar & Category Filters */}
+                <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3 shadow-xs">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                    <input
+                      type="text"
+                      value={posSearchQuery}
+                      onChange={(e) => setPosSearchQuery(e.target.value)}
+                      placeholder="Buscar por nombre, código de barras o código de carta (ej. Doritos, LOB-S005, Sobres)..."
+                      className="w-full pl-10 pr-9 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-blue-600 font-medium"
+                    />
+                    {posSearchQuery && (
                       <button
-                        key={m.id}
                         type="button"
-                        onClick={() => setPosPaymentMethod(m.id as typeof posPaymentMethod)}
-                        className={`py-2 text-xs font-semibold rounded-xl border transition cursor-pointer ${
-                          posPaymentMethod === m.id
-                            ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-500 text-blue-700 dark:text-blue-300 font-bold'
-                            : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        onClick={() => setPosSearchQuery('')}
+                        className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Category Pills */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                    {[
+                      { id: 'all', label: 'Todos' },
+                      { id: 'tcg_single', label: '🃏 Singles' },
+                      { id: 'tcg_sealed', label: '📦 Sellados' },
+                      { id: 'accessory', label: '🛡️ Accesorios' },
+                      { id: 'snack', label: '🍿 Cafetería' },
+                      { id: 'beverage', label: '🥤 Bebidas' },
+                    ].map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setPosCategoryFilter(cat.id)}
+                        className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition cursor-pointer text-[11px] ${
+                          posCategoryFilter === cat.id
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                         }`}
                       >
-                        {m.label}
+                        {cat.label}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-base font-black text-slate-900 dark:text-white pt-2">
-                  <span>Total Cobro:</span>
-                  <span className="text-2xl text-emerald-600 dark:text-emerald-400 font-mono">
-                    ${posTotal.toFixed(2)}
-                  </span>
+                {/* Catalog Grid */}
+                {filteredPosProducts.length === 0 ? (
+                  <div className="p-12 text-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-slate-400 text-xs">
+                    No se encontraron productos coincidentes en el inventario.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[580px] overflow-y-auto pr-1">
+                    {filteredPosProducts.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          addToPosCart(p);
+                          playBeep('success');
+                        }}
+                        className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 rounded-2xl text-left transition cursor-pointer flex flex-col justify-between h-36 group shadow-xs hover:shadow-md relative overflow-hidden active:scale-98"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-1 mb-1">
+                            {p.card_condition ? (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500 text-slate-950">
+                                {p.card_condition}
+                              </span>
+                            ) : p.tcg_game ? (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                {p.tcg_game}
+                              </span>
+                            ) : (
+                              <span className="text-[9px] text-slate-400 font-mono uppercase">
+                                {p.category === 'snack' ? 'Snack' : p.category === 'beverage' ? 'Bebida' : 'Art.'}
+                              </span>
+                            )}
+                            <span
+                              className={`text-[9px] font-bold font-mono px-1 rounded ${
+                                p.stock_quantity <= 2
+                                  ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                                  : 'text-slate-400'
+                              }`}
+                            >
+                              Stock: {p.stock_quantity}
+                            </span>
+                          </div>
+
+                          <p className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 line-clamp-2 leading-tight">
+                            {p.name}
+                          </p>
+
+                          {p.card_set && (
+                            <span className="text-[9px] text-slate-400 block truncate mt-0.5">
+                              {p.card_set}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                          <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">
+                            ${p.price.toFixed(2)}
+                          </span>
+                          <span className="p-1 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 group-hover:bg-blue-600 group-hover:text-white transition">
+                            <Plus className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Ticket Cart, Discounts, Customer, Payments */}
+              <div className="lg:col-span-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex flex-col justify-between min-h-[580px] shadow-xs space-y-4">
+                <div className="space-y-3">
+                  {/* Ticket Header & Customer Bar */}
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                        <Receipt className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        Ticket Mostrador
+                      </h4>
+                      {loadedReservationId && (
+                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold font-mono">
+                          Vinculado a Reserva #{loadedReservationId}
+                        </span>
+                      )}
+                    </div>
+                    {posCart.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPosCart([]);
+                          setLoadedReservationId(null);
+                        }}
+                        className="text-[11px] text-rose-600 hover:underline cursor-pointer font-semibold"
+                      >
+                        Vaciar Ticket
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Customer Assignment Input */}
+                  <div className="grid grid-cols-2 gap-2 p-2.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                        Cliente:
+                      </label>
+                      <input
+                        type="text"
+                        value={posCustomerName}
+                        onChange={(e) => setPosCustomerName(e.target.value)}
+                        placeholder="Público General"
+                        className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-blue-600"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-0.5">
+                        Teléfono (Opcional):
+                      </label>
+                      <input
+                        type="tel"
+                        value={posCustomerPhone}
+                        onChange={(e) => setPosCustomerPhone(e.target.value)}
+                        placeholder="55..."
+                        maxLength={10}
+                        className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-blue-600"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Cart Items */}
+                  {posCart.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400 dark:text-slate-500 text-xs space-y-1">
+                      <ShoppingBag className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
+                      <p className="font-semibold">El ticket está vacío</p>
+                      <p className="text-[11px]">Haz clic en los productos o escanea con el lector.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                      {posCart.map((item) => (
+                        <div
+                          key={item.product.id}
+                          className="p-2.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs gap-2"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-slate-900 dark:text-white truncate">
+                              {item.product.name}
+                            </p>
+                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+                              <span>${item.product.price.toFixed(2)} c/u</span>
+                              {item.product.card_condition && (
+                                <span className="font-mono font-bold text-amber-500">
+                                  [{item.product.card_condition}]
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => updatePosQty(item.product.id, -1)}
+                              className="p-1 hover:text-blue-600 text-slate-500 cursor-pointer"
+                            >
+                              -
+                            </button>
+                            <span className="font-bold text-slate-900 dark:text-white px-1.5 text-xs">
+                              {item.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => updatePosQty(item.product.id, 1)}
+                              className="p-1 hover:text-blue-600 text-slate-500 cursor-pointer"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400 pl-1 shrink-0">
+                            ${(item.product.price * item.quantity).toFixed(2)}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => updatePosQty(item.product.id, -item.quantity)}
+                            className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                            title="Quitar"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                <button
-                  type="button"
-                  disabled={posCart.length === 0}
-                  onClick={handleCompletePosSale}
-                  className={`w-full py-3.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
-                    posCart.length > 0
-                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
-                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
-                  }`}
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Completar Cobro Mostrador
-                </button>
+                {/* Bottom: Discounts, Payment method, Cash Calculator & Checkout */}
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                  {/* Discounts Bar */}
+                  {posCart.length > 0 && (
+                    <div className="flex items-center justify-between gap-1 text-[11px] bg-slate-50 dark:bg-slate-950 p-2 rounded-xl border border-slate-200 dark:border-slate-800">
+                      <span className="font-bold text-slate-600 dark:text-slate-400">Descuento:</span>
+                      <div className="flex items-center gap-1">
+                        {[
+                          { type: 'none', label: 'Sin desc.', val: 0 },
+                          { type: 'percent', label: '5%', val: 5 },
+                          { type: 'percent', label: '10%', val: 10 },
+                          { type: 'percent', label: '15%', val: 15 },
+                        ].map((d) => (
+                          <button
+                            key={d.label}
+                            type="button"
+                            onClick={() => {
+                              setPosDiscountType(d.type as any);
+                              setPosDiscountValue(d.val);
+                            }}
+                            className={`px-2 py-0.5 rounded-lg font-bold text-[10px] transition cursor-pointer ${
+                              posDiscountType === d.type && posDiscountValue === d.val
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800'
+                            }`}
+                          >
+                            {d.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Payment Method Selector */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block">
+                      Método de Pago:
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'cash', label: '💵 Efectivo' },
+                        { id: 'card', label: '💳 Tarjeta' },
+                        { id: 'transfer', label: '📲 Transferencia' },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setPosPaymentMethod(m.id as typeof posPaymentMethod)}
+                          className={`py-2 text-xs font-bold rounded-xl border transition cursor-pointer text-center ${
+                            posPaymentMethod === m.id
+                              ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-600 text-blue-700 dark:text-blue-300 shadow-xs'
+                              : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Cash Change Calculator (When cash is selected) */}
+                  {posPaymentMethod === 'cash' && posCart.length > 0 && (
+                    <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 rounded-xl border border-emerald-200 dark:border-emerald-800/60 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <label className="font-bold text-slate-700 dark:text-slate-300">
+                          Paga con Efectivo:
+                        </label>
+                        <div className="relative w-32">
+                          <span className="absolute left-2.5 top-1.5 text-xs font-bold text-slate-400">$</span>
+                          <input
+                            type="number"
+                            step="any"
+                            value={posCashReceived}
+                            onChange={(e) => setPosCashReceived(e.target.value)}
+                            placeholder={posTotal.toFixed(2)}
+                            className="w-full pl-6 pr-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-black text-slate-900 dark:text-white font-mono text-right focus:outline-none focus:border-emerald-600"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Quick Denominations */}
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[10px] text-slate-400">Billetes:</span>
+                        <div className="flex items-center gap-1 flex-wrap justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setPosCashReceived(posTotal.toString())}
+                            className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-800 text-[10px] font-bold cursor-pointer"
+                          >
+                            Exacto
+                          </button>
+                          {[50, 100, 200, 500, 1000].map((denom) => (
+                            <button
+                              key={denom}
+                              type="button"
+                              onClick={() => setPosCashReceived(denom.toString())}
+                              className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-800 text-[10px] font-mono font-bold cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-950"
+                            >
+                              ${denom}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Change Amount Box */}
+                      {posCashAmount > 0 && (
+                        <div className="pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40 flex items-center justify-between text-xs">
+                          {posCashAmount >= posTotal ? (
+                            <>
+                              <span className="font-bold text-emerald-800 dark:text-emerald-300">
+                                CAMBIO A ENTREGAR:
+                              </span>
+                              <span className="text-base font-black text-emerald-700 dark:text-emerald-300 font-mono">
+                                ${posChangeDue.toFixed(2)} MXN
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-bold text-amber-700 dark:text-amber-400">
+                                Cantidad insuficiente (Faltan):
+                              </span>
+                              <span className="font-bold text-amber-700 dark:text-amber-400 font-mono">
+                                ${(posTotal - posCashAmount).toFixed(2)} MXN
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Totals Summary */}
+                  <div className="space-y-1 text-xs pt-1">
+                    {posDiscountAmount > 0 && (
+                      <div className="flex justify-between text-rose-600 font-semibold text-[11px]">
+                        <span>Descuento aplicado:</span>
+                        <span>-${posDiscountAmount.toFixed(2)} MXN</span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between text-base font-black text-slate-900 dark:text-white pt-1">
+                      <span>Total Cobro:</span>
+                      <span className="text-2xl text-emerald-600 dark:text-emerald-400 font-mono">
+                        ${posTotal.toFixed(2)} MXN
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Complete Sale Action */}
+                  <button
+                    type="button"
+                    disabled={posCart.length === 0 || (posPaymentMethod === 'cash' && posCashAmount < posTotal && posTotal > 0)}
+                    onClick={handleCompletePosSale}
+                    className={`w-full py-3.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-sm active:scale-98 ${
+                      posCart.length > 0 && !(posPaymentMethod === 'cash' && posCashAmount < posTotal && posTotal > 0)
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Cobrar e Imprimir Ticket (${posTotal.toFixed(2)})</span>
+                  </button>
+                </div>
               </div>
             </div>
+
+            {/* Modal: Cargar Reservas Web al POS */}
+            {isLoadReservationOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-fade-in">
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 w-full max-w-xl space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <ShoppingBag className="w-5 h-5 text-amber-500" />
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                          Reservas Web Pendientes para Entrega en Tienda
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Selecciona una reserva para cargar sus productos directo a caja
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsLoadReservationOpen(false)}
+                      className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-lg"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto space-y-3">
+                    {orders.filter((o) => o.tenant_id === currentTenantId && o.status === 'pending_pickup').length === 0 ? (
+                      <div className="p-8 text-center text-xs text-slate-400">
+                        No hay reservas web pendientes de entrega en este momento.
+                      </div>
+                    ) : (
+                      orders
+                        .filter((o) => o.tenant_id === currentTenantId && o.status === 'pending_pickup')
+                        .map((resOrder) => (
+                          <div
+                            key={resOrder.id}
+                            className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl flex items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                                  {resOrder.reservation_code}
+                                </span>
+                                <span className="font-bold text-slate-900 dark:text-white">
+                                  {resOrder.customer_name}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-500">
+                                Tel: {resOrder.customer_phone} • {resOrder.items?.length || 0} artículos
+                              </p>
+                              <div className="text-[10px] text-slate-400">
+                                {resOrder.items?.map((it) => `${it.quantity}x ${it.product_name}`).join(', ')}
+                              </div>
+                            </div>
+
+                            <div className="text-right shrink-0 space-y-1.5">
+                              <span className="font-black text-emerald-600 dark:text-emerald-400 font-mono text-sm block">
+                                ${resOrder.total.toFixed(2)} MXN
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleLoadReservationToPos(resOrder)}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1"
+                              >
+                                <span>Cargar a Caja</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setIsLoadReservationOpen(false)}
+                      className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl cursor-pointer"
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -4815,6 +5262,31 @@ export default function DashboardPage() {
       <RegisterStoreModal
         isOpen={isRegisterModalOpen}
         onClose={() => setIsRegisterModalOpen(false)}
+      />
+
+      {/* 80mm/58mm Thermal Ticket Receipt Modal */}
+      <TicketModal
+        order={selectedTicketForModal}
+        tenant={currentTenant}
+        onClose={() => setSelectedTicketForModal(null)}
+        onNewSale={() => {
+          setSelectedTicketForModal(null);
+          setPosCart([]);
+          setPosCashReceived('');
+          setPosCustomerName('Público General');
+          setPosCustomerPhone('');
+          setPosDiscountType('none');
+          setPosDiscountValue(0);
+        }}
+      />
+
+      {/* Daily Cash Closing (Corte de Caja / Reporte Z) Modal */}
+      <CorteCajaModal
+        isOpen={isCorteCajaOpen}
+        onClose={() => setIsCorteCajaOpen(false)}
+        orders={orders}
+        tenant={currentTenant}
+        onSelectTicket={(ord) => setSelectedTicketForModal(ord)}
       />
 
       {/* Dashboard Footer with Legal & Privacy Modals */}

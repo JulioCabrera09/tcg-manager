@@ -524,6 +524,91 @@ export const dataStore = {
     return newOrder;
   },
 
+  createPosSale({
+    tenantId,
+    customerName,
+    customerPhone,
+    paymentMethod,
+    items,
+    discountAmount = 0,
+    discountPercent = 0,
+    amountPaid = 0,
+    changeGiven = 0,
+    cashierName,
+    notes,
+  }: {
+    tenantId: string;
+    customerName?: string;
+    customerPhone?: string;
+    paymentMethod: 'cash' | 'card' | 'transfer';
+    items: { product: TenantProduct; quantity: number; variationText?: string }[];
+    discountAmount?: number;
+    discountPercent?: number;
+    amountPaid?: number;
+    changeGiven?: number;
+    cashierName?: string;
+    notes?: string;
+  }): Order {
+    const orderItems: OrderItem[] = items.map((i) => ({
+      id: `item-${Math.random().toString(36).substring(2, 9)}`,
+      order_id: '',
+      tenant_product_id: i.product.id,
+      product_name: i.product.name,
+      variation_info: i.variationText,
+      quantity: i.quantity,
+      unit_price: i.product.price,
+      subtotal: i.product.price * i.quantity,
+    }));
+
+    const rawSubtotal = orderItems.reduce((acc, item) => acc + item.subtotal, 0);
+    const finalTotal = Math.max(0, rawSubtotal - discountAmount);
+    const ticketFolio = `TCK-${Math.floor(10000 + Math.random() * 90000)}`;
+
+    const newOrder: Order = {
+      id: `ord-pos-${Date.now()}`,
+      tenant_id: tenantId,
+      reservation_code: ticketFolio,
+      customer_name: customerName?.trim() || 'Público General',
+      customer_phone: customerPhone?.trim() || 'Mostrador',
+      order_type: 'pos_direct',
+      delivery_type: 'store_pickup',
+      status: 'completed',
+      payment_method: paymentMethod,
+      subtotal: rawSubtotal,
+      total: finalTotal,
+      discount_amount: discountAmount,
+      discount_percent: discountPercent,
+      amount_paid: amountPaid,
+      change_given: changeGiven,
+      cashier_name: cashierName || 'Cajero en Turno',
+      notes,
+      items: orderItems,
+      created_at: new Date().toISOString(),
+    };
+
+    const all = getStorage<Order[]>(STORAGE_KEYS.ORDERS, INITIAL_ORDERS);
+    all.unshift(newOrder);
+    setStorage(STORAGE_KEYS.ORDERS, all);
+    syncService.syncOrder(newOrder);
+
+    // Decrement stock for sold items in inventory exactly once
+    items.forEach((item) => {
+      const prod = this.getProductById(item.product.id);
+      if (prod) {
+        this.updateProduct({
+          id: prod.id,
+          stock_quantity: Math.max(0, prod.stock_quantity - item.quantity),
+        });
+      }
+    });
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tcg_order_created'));
+    }
+
+    return newOrder;
+  },
+
   getProductById(id: string): TenantProduct | undefined {
     const all = getStorage<TenantProduct[]>(STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS);
     return all.find((p) => p.id === id);
