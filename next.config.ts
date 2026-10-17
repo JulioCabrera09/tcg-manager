@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // @ts-ignore - Next.js 16 internal dev setting to prevent AGENTS.md sync file-watch loops
+  agentRules: false,
   images: {
     remotePatterns: [
       {
@@ -21,3 +23,4 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+

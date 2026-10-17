@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   subscribeToAuctionRealtime,
   subscribeToStoreRealtime,
@@ -33,14 +33,21 @@ export function useAuctionRealtime(
     onAuctionUpdate?: (auction: Partial<Auction>) => void;
   }
 ) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
   useEffect(() => {
     if (!auctionId) return;
 
-    const unsubscribe = subscribeToAuctionRealtime(auctionId, handlers);
+    const unsubscribe = subscribeToAuctionRealtime(auctionId, {
+      onBid: (bid) => handlersRef.current.onBid?.(bid),
+      onMessage: (msg) => handlersRef.current.onMessage?.(msg),
+      onAuctionUpdate: (auc) => handlersRef.current.onAuctionUpdate?.(auc),
+    });
     return () => {
       unsubscribe();
     };
-  }, [auctionId, handlers.onBid, handlers.onMessage, handlers.onAuctionUpdate]);
+  }, [auctionId]);
 }
 
 /**
@@ -53,14 +60,20 @@ export function useStoreRealtime(
     onProductUpdate?: (product: Partial<TenantProduct>) => void;
   }
 ) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
   useEffect(() => {
     if (!tenantId) return;
 
-    const unsubscribe = subscribeToStoreRealtime(tenantId, handlers);
+    const unsubscribe = subscribeToStoreRealtime(tenantId, {
+      onNewOrder: (order) => handlersRef.current.onNewOrder?.(order),
+      onProductUpdate: (prod) => handlersRef.current.onProductUpdate?.(prod),
+    });
     return () => {
       unsubscribe();
     };
-  }, [tenantId, handlers.onNewOrder, handlers.onProductUpdate]);
+  }, [tenantId]);
 }
 
 /**
@@ -73,12 +86,19 @@ export function useOfferRealtime(
     onOfferUpdate?: (offer: Partial<CardOffer>) => void;
   }
 ) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
   useEffect(() => {
     if (!offerId) return;
 
-    const unsubscribe = subscribeToOfferRealtime(offerId, handlers);
+    const unsubscribe = subscribeToOfferRealtime(offerId, {
+      onMessage: (msg) => handlersRef.current.onMessage?.(msg),
+      onOfferUpdate: (off) => handlersRef.current.onOfferUpdate?.(off),
+    });
     return () => {
       unsubscribe();
     };
-  }, [offerId, handlers.onMessage, handlers.onOfferUpdate]);
+  }, [offerId]);
 }
+

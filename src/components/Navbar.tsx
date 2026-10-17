@@ -283,7 +283,11 @@ export default function Navbar() {
             {/* Theme Toggle Button */}
             <button
               type="button"
-              onClick={toggleTheme}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleTheme();
+              }}
               className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-slate-300 dark:hover:border-slate-700 transition-all duration-200 cursor-pointer flex items-center gap-2 text-xs font-semibold"
               title={theme === 'dark' ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Noche'}
               aria-label="Alternar tema"
@@ -337,7 +341,11 @@ export default function Navbar() {
             <RoleSwitcher />
             <button
               type="button"
-              onClick={toggleTheme}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleTheme();
+              }}
               className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
               aria-label="Alternar tema"
             >
