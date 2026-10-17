@@ -26,13 +26,18 @@ import {
   UtensilsCrossed,
   Check,
   AlertCircle,
+  PlusCircle,
+  Globe,
 } from 'lucide-react';
 import { dataStore } from '@/lib/store';
-import { Tenant } from '@/types/database';
+import { Tenant, UserProfile } from '@/types/database';
 import Footer from '@/components/Footer';
+import RegisterStoreModal from '@/components/RegisterStoreModal';
 
 export default function HomePage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [currentUser, setCurrentUser] = useState<UserProfile>(dataStore.getCurrentUser());
+  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
 
   // Anti-Troll interactive demo simulation state
   const [auctionDemoState, setAuctionDemoState] = useState<
@@ -40,7 +45,16 @@ export default function HomePage() {
   >('active');
 
   useEffect(() => {
+    const handleUserChanged = () => {
+      setCurrentUser(dataStore.getCurrentUser());
+      setTenants(dataStore.getTenants());
+    };
+
     setTenants(dataStore.getTenants());
+    setCurrentUser(dataStore.getCurrentUser());
+
+    window.addEventListener('tcg_user_changed', handleUserChanged);
+    return () => window.removeEventListener('tcg_user_changed', handleUserChanged);
   }, []);
 
   return (
@@ -65,22 +79,95 @@ export default function HomePage() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 mt-8">
-            <Link
-              href="/dashboard"
-              className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2 group"
-            >
-              <Store className="w-4 h-4" />
-              Ingresar al ERP / POS de Tienda
-              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
-            </Link>
+            {/* Common / Regular User Hero CTAs */}
+            {currentUser?.role === 'regular_user' ? (
+              <>
+                <Link
+                  href="/marketplace"
+                  className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2 group"
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  Explorar Marketplace TCG
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
+                </Link>
 
-            <Link
-              href="/admin"
-              className="w-full sm:w-auto px-6 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
-            >
-              <ShieldCheck className="w-4 h-4 text-amber-500" />
-              Panel Super Admin Maestro
-            </Link>
+                <Link
+                  href="/subastas"
+                  className="w-full sm:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Gavel className="w-4 h-4 text-amber-500" />
+                  Ver Subastas Activas
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={() => setIsRegisterModalOpen(true)}
+                  className="w-full sm:w-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  ¿Tienes una tienda? Abrir Tienda
+                </button>
+              </>
+            ) : currentUser?.role === 'store_admin' ? (
+              /* Store Admin Hero CTAs */
+              <>
+                <Link
+                  href="/dashboard"
+                  className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2 group"
+                >
+                  <Store className="w-4 h-4" />
+                  Ir a Mi Panel de Tienda ({currentUser.store_name || 'Mi Tienda'})
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
+                </Link>
+
+                {currentUser.store_slug && (
+                  <Link
+                    href={`/tienda/${currentUser.store_slug}`}
+                    target="_blank"
+                    className="w-full sm:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    Ver Mi Tienda Pública
+                  </Link>
+                )}
+
+                <Link
+                  href="/marketplace"
+                  className="w-full sm:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <ShoppingBag className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  Marketplace TCG
+                </Link>
+              </>
+            ) : (
+              /* Super Admin Hero CTAs */
+              <>
+                <Link
+                  href="/dashboard"
+                  className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2 group"
+                >
+                  <Store className="w-4 h-4" />
+                  Ingresar al ERP / POS de Tienda
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition" />
+                </Link>
+
+                <Link
+                  href="/admin"
+                  className="w-full sm:w-auto px-6 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <ShieldCheck className="w-4 h-4 text-amber-500" />
+                  Panel Super Admin Maestro
+                </Link>
+
+                <Link
+                  href="/marketplace"
+                  className="w-full sm:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition-all duration-200 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <ShoppingBag className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  Marketplace TCG
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -174,14 +261,30 @@ export default function HomePage() {
                   <ExternalLink className="w-3.5 h-3.5" />
                 </Link>
 
-                <Link
-                  href="/dashboard"
-                  onClick={() => dataStore.setActiveTenantId(t.id)}
-                  className="text-xs text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-300 font-medium transition cursor-pointer flex items-center gap-1"
-                >
-                  <span>Gestionar en ERP</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
+                {/* Role-Aware ERP action on card */}
+                {currentUser?.role === 'superadmin' ? (
+                  <Link
+                    href="/dashboard"
+                    onClick={() => dataStore.setActiveTenantId(t.id)}
+                    className="text-xs text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-300 font-medium transition cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Auditar en ERP</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                ) : currentUser?.role === 'store_admin' && currentUser.tenant_id === t.id ? (
+                  <Link
+                    href="/dashboard"
+                    className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline font-bold transition cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Gestionar Mi Tienda</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                ) : (
+                  <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                    <Globe className="w-3 h-3" />
+                    {t.slug}.localhost:3000
+                  </span>
+                )}
               </div>
             </div>
           ))}
@@ -428,6 +531,11 @@ export default function HomePage() {
 
       {/* Footer with Legal Terms & Privacy Notice */}
       <Footer variant="landing" />
+
+      <RegisterStoreModal
+        isOpen={isRegisterModalOpen}
+        onClose={() => setIsRegisterModalOpen(false)}
+      />
     </div>
   );
 }

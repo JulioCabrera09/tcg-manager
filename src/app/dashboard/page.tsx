@@ -47,12 +47,26 @@ import {
   Upload,
   Swords,
   UserCheck,
+  Lock,
+  ShieldAlert,
+  PlusCircle,
+  Gavel,
+  ArrowRight,
+  MessageSquare,
+  Send,
+  Key,
+  ShieldCheck,
+  HelpCircle,
+  Palette,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import Footer from '@/components/Footer';
 import { dataStore } from '@/lib/store';
 import { playBeep } from '@/lib/audio';
 import BarcodeScannerModal from '@/components/BarcodeScannerModal';
-import { sanitizeMexicanPhone, isValidMexicanPhone } from '@/lib/security';
+import RegisterStoreModal from '@/components/RegisterStoreModal';
+import { sanitizeMexicanPhone, isValidMexicanPhone, hashPassword } from '@/lib/security';
 import { useStoreRealtime } from '@/lib/supabase/useRealtime';
 import {
   Tenant,
@@ -66,13 +80,18 @@ import {
   TCGGame,
   CardCondition,
   TenantRole,
+  UserProfile,
+  StaffPermissions,
+  AdminSupportMessage,
 } from '@/types/database';
 
 export default function DashboardPage() {
+  const [currentUser, setCurrentUser] = useState<UserProfile>(dataStore.getCurrentUser());
+  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [currentTenantId, setCurrentTenantId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<
-    'inventory' | 'pos' | 'reservations' | 'tournaments' | 'reports' | 'team' | 'settings'
+    'inventory' | 'pos' | 'reservations' | 'tournaments' | 'reports' | 'team' | 'settings' | 'support'
   >('inventory');
 
   // Loaded Data for current tenant
@@ -219,42 +238,129 @@ export default function DashboardPage() {
   const [newMember, setNewMember] = useState({
     user_name: '',
     user_email: '',
+    password: '',
     role: 'editor' as TenantRole,
     can_delete_inventory: false,
     can_edit_inventory: true,
     can_manage_tournaments: true,
     can_view_finance: false,
     can_create_tickets: true,
+    can_edit_landing: false,
   });
+  const [memberCreatedNotice, setMemberCreatedNotice] = useState<string | null>(null);
 
-  // Settings Phone / WhatsApp strict 10 digits
+  // Settings Phone / WhatsApp strict 10 digits & Storefront Customization
+  const [settingsName, setSettingsName] = useState<string>('');
+  const [settingsTagline, setSettingsTagline] = useState<string>('');
+  const [settingsDescription, setSettingsDescription] = useState<string>('');
+  const [settingsAddress, setSettingsAddress] = useState<string>('');
   const [settingsPhone, setSettingsPhone] = useState<string>('');
   const [settingsWhatsapp, setSettingsWhatsapp] = useState<string>('');
+  const [settingsThemeColor, setSettingsThemeColor] = useState<string>('#2563eb');
+  const [settingsLogoUrl, setSettingsLogoUrl] = useState<string>('');
+  const [settingsBannerUrl, setSettingsBannerUrl] = useState<string>('');
+  const [settingsIsHiring, setSettingsIsHiring] = useState<boolean>(false);
+  const [settingsHiringTitle, setSettingsHiringTitle] = useState<string>('');
+  const [settingsHiringDesc, setSettingsHiringDesc] = useState<string>('');
 
-  // Load initial data
+  // Audio / Sound alerts toggle for store
+  const [soundAlertsEnabled, setSoundAlertsEnabled] = useState<boolean>(true);
+
+  // Direct Support with Super Admin Julio Cabrera
+  const [supportMessages, setSupportMessages] = useState<AdminSupportMessage[]>([]);
+  const [newSupportSubject, setNewSupportSubject] = useState<string>('');
+  const [newSupportText, setNewSupportText] = useState<string>('');
+  const [isSendingSupport, setIsSendingSupport] = useState<boolean>(false);
+
+  const populateTenantSettings = (t: Tenant) => {
+    setSettingsName(t.name || '');
+    setSettingsTagline(t.tagline || '');
+    setSettingsDescription(t.description || '');
+    setSettingsAddress(t.address || '');
+    setSettingsPhone(sanitizeMexicanPhone(t.phone || ''));
+    setSettingsWhatsapp(sanitizeMexicanPhone(t.whatsapp || ''));
+    setSettingsThemeColor(t.theme_color || '#2563eb');
+    setSettingsLogoUrl(t.logo_url || '');
+    setSettingsBannerUrl(t.banner_url || '');
+    setSettingsIsHiring(t.is_hiring || false);
+    setSettingsHiringTitle(t.hiring_title || '');
+    setSettingsHiringDesc(t.hiring_description || '');
+  };
+
+  // Load initial data and keep user/tenant reactive to role changes
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const storedSound = window.localStorage.getItem('tcg_sound_alerts_enabled');
+      if (storedSound !== null) setSoundAlertsEnabled(storedSound === 'true');
+    }
+
+    const handleUserChanged = () => {
+      const user = dataStore.getCurrentUser();
+      setCurrentUser(user);
+      const allTenants = dataStore.getTenants();
+      setTenants(allTenants);
+
+      if ((user.role === 'store_admin' || user.role === 'store_staff') && user.tenant_id) {
+        setCurrentTenantId(user.tenant_id);
+        loadTenantData(user.tenant_id);
+        const found = allTenants.find((t) => t.id === user.tenant_id) || allTenants[0];
+        if (found) {
+          populateTenantSettings(found);
+        }
+      } else if (allTenants.length > 0) {
+        const activeId = dataStore.getActiveTenantId() || allTenants[0].id;
+        setCurrentTenantId(activeId);
+        loadTenantData(activeId);
+        const found = allTenants.find((t) => t.id === activeId);
+        if (found) populateTenantSettings(found);
+      }
+    };
+
+    const handleSupportChanged = () => {
+      const activeTenant = currentTenantId || dataStore.getActiveTenantId();
+      if (activeTenant) {
+        setSupportMessages(dataStore.getAdminSupportMessages(activeTenant));
+      }
+    };
+
+    const user = dataStore.getCurrentUser();
+    setCurrentUser(user);
     const allTenants = dataStore.getTenants();
     setTenants(allTenants);
-    if (allTenants.length > 0) {
-      const activeId = dataStore.getActiveTenantId() || allTenants[0].id;
+
+    let activeId = dataStore.getActiveTenantId() || (allTenants[0] ? allTenants[0].id : '');
+    if ((user.role === 'store_admin' || user.role === 'store_staff') && user.tenant_id) {
+      activeId = user.tenant_id;
+    }
+
+    if (activeId) {
       setCurrentTenantId(activeId);
       loadTenantData(activeId);
       const found = allTenants.find((t) => t.id === activeId) || allTenants[0];
       if (found) {
-        setSettingsPhone(sanitizeMexicanPhone(found.phone || ''));
-        setSettingsWhatsapp(sanitizeMexicanPhone(found.whatsapp || ''));
+        populateTenantSettings(found);
       }
     }
-  }, []);
+
+    window.addEventListener('tcg_user_changed', handleUserChanged);
+    window.addEventListener('tcg_support_changed', handleSupportChanged);
+    return () => {
+      window.removeEventListener('tcg_user_changed', handleUserChanged);
+      window.removeEventListener('tcg_support_changed', handleSupportChanged);
+    };
+  }, [currentTenantId]);
 
   const loadTenantData = (tenantId: string) => {
     setProducts(dataStore.getProducts(tenantId));
     setOrders(dataStore.getOrders(tenantId));
     setTournaments(dataStore.getTournaments(tenantId));
     setMembers(dataStore.getMembers(tenantId));
+    setSupportMessages(dataStore.getAdminSupportMessages(tenantId));
   };
 
   const handleSwitchTenant = (tenantId: string) => {
+    // Only superadmin can switch between different stores
+    if (currentUser.role !== 'superadmin') return;
     setCurrentTenantId(tenantId);
     dataStore.setActiveTenantId(tenantId);
     loadTenantData(tenantId);
@@ -668,38 +774,234 @@ export default function DashboardPage() {
     refreshCurrentData();
   };
 
-  const handleSaveMember = (e: React.FormEvent) => {
+  const handleSaveMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    dataStore.addMember({
-      tenant_id: currentTenantId,
-      user_id: `usr-${Date.now()}`,
-      role: newMember.role,
-      user_name: newMember.user_name,
-      user_email: newMember.user_email,
-      can_delete_inventory: newMember.can_delete_inventory,
-      can_edit_inventory: newMember.can_edit_inventory,
-      can_manage_tournaments: newMember.can_manage_tournaments,
-      can_view_finance: newMember.can_view_finance,
-      can_create_tickets: newMember.can_create_tickets,
+    if (!newMember.user_name.trim()) return;
+
+    try {
+      const rawPassword = newMember.password || 'tcg2026';
+      const hashedPassword = await hashPassword(rawPassword);
+
+      const permissions: StaffPermissions = {
+        can_manage_inventory: newMember.can_edit_inventory,
+        can_use_pos: newMember.can_create_tickets,
+        can_manage_tournaments: newMember.can_manage_tournaments,
+        can_view_finances: newMember.can_view_finance,
+        can_edit_landing: newMember.can_edit_landing,
+      };
+
+      // 1. Create functional Staff User account for dedicated store login
+      const staffProfile = dataStore.createStaffUser(
+        currentTenantId,
+        newMember.user_name,
+        newMember.user_email || `${newMember.user_name.toLowerCase().replace(/\s+/g, '')}@${currentTenant.slug}.com`,
+        hashedPassword,
+        permissions
+      );
+
+      // 2. Add to Store ERP members table
+      dataStore.addMember({
+        tenant_id: currentTenantId,
+        user_id: staffProfile.id,
+        role: newMember.role,
+        user_name: newMember.user_name,
+        user_email: newMember.user_email,
+        can_delete_inventory: newMember.can_delete_inventory,
+        can_edit_inventory: newMember.can_edit_inventory,
+        can_manage_tournaments: newMember.can_manage_tournaments,
+        can_view_finance: newMember.can_view_finance,
+        can_create_tickets: newMember.can_create_tickets,
+      });
+
+      setMemberCreatedNotice(
+        `¡Empleado "${newMember.user_name}" registrado con éxito! Credenciales activas para el portal /tienda/${currentTenant.slug}/login (Contraseña: ${rawPassword})`
+      );
+
+      setIsMemberModalOpen(false);
+      setNewMember({
+        user_name: '',
+        user_email: '',
+        password: '',
+        role: 'editor',
+        can_delete_inventory: false,
+        can_edit_inventory: true,
+        can_manage_tournaments: true,
+        can_view_finance: false,
+        can_create_tickets: true,
+        can_edit_landing: false,
+      });
+      refreshCurrentData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error al registrar colaborador';
+      alert(msg);
+    }
+  };
+
+  const handleSendSupportMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSupportText.trim()) return;
+    setIsSendingSupport(true);
+
+    dataStore.sendAdminSupportMessage({
+      store_id: currentTenant.id,
+      store_name: currentTenant.name,
+      store_slug: currentTenant.slug,
+      sender_name: currentUser.name,
+      sender_email: currentUser.email,
+      sender_role: 'store_admin',
+      subject: newSupportSubject.trim() || 'Consulta Operativa de Tienda',
+      message: newSupportText.trim(),
+      status: 'open',
     });
-    setIsMemberModalOpen(false);
-    setNewMember({
-      user_name: '',
-      user_email: '',
-      role: 'editor',
-      can_delete_inventory: false,
-      can_edit_inventory: true,
-      can_manage_tournaments: true,
-      can_view_finance: false,
-      can_create_tickets: true,
+
+    dataStore.addNotification({
+      recipient_id: 'usr-superadmin',
+      title: `Soporte: Consulta de ${currentTenant.name}`,
+      message: `${currentUser.name} (${currentTenant.name}): "${newSupportText.trim().substring(0, 60)}..."`,
+      type: 'system',
+      action_url: '/admin',
     });
-    refreshCurrentData();
+
+    setNewSupportSubject('');
+    setNewSupportText('');
+    setIsSendingSupport(false);
+    setSupportMessages(dataStore.getAdminSupportMessages(currentTenant.id));
+    alert('Mensaje enviado al Super Admin Julio Cabrera. Podrás ver su respuesta oficial aquí mismo.');
   };
 
   const handleUpdateOrderStatus = (orderId: string, status: Order['status']) => {
     dataStore.updateOrderStatus(orderId, status);
     refreshCurrentData();
   };
+
+  // RESTRICTED ACCESS SCREEN FOR REGULAR USERS
+  if (currentUser.role === 'regular_user') {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col justify-between transition-colors duration-200">
+        <main className="flex-1 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 w-full flex flex-col justify-center">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden p-6 sm:p-10 space-y-8 animate-fade-in">
+            {/* Top Badge & Icon */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-6">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 shadow-sm">
+                  <Lock className="w-7 h-7" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300 dark:border-amber-800 uppercase tracking-wider">
+                      Acceso Exclusivo para Tiendas
+                    </span>
+                  </div>
+                  <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mt-1">
+                    Panel ERP / POS de Gestión
+                  </h1>
+                </div>
+              </div>
+
+              <div className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs">
+                <span className="text-slate-500 dark:text-slate-400 block text-[10px] font-bold uppercase">Sesión Activa</span>
+                <span className="font-bold text-slate-900 dark:text-white">{currentUser.name}</span>
+                <span className="text-slate-400 ml-1.5 font-mono text-[11px]">(Usuario Común)</span>
+              </div>
+            </div>
+
+            {/* Explanation Note */}
+            <div className="space-y-3">
+              <p className="text-sm sm:text-base text-slate-700 dark:text-slate-300 leading-relaxed">
+                El <strong className="text-slate-900 dark:text-white">Panel ERP / POS</strong> contiene las herramientas operativas internas de las tiendas afiliadas (control de inventario privado, caja de ventas, escáner de códigos de barras, torneos y finanzas).
+              </p>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+                Como usuario coleccionista o comprador, tienes acceso completo al <strong className="text-blue-600 dark:text-blue-400">Marketplace TCG Unificado</strong> para buscar cartas sueltas, comprar productos de tiendas, participar en subastas en vivo y gestionar tus carpetas virtuales.
+              </p>
+            </div>
+
+            {/* 3 Value Pillars of the SaaS */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 space-y-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <ShoppingBag className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-900 dark:text-white">
+                  Marketplace Unificado
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Explora las vitrinas de cartas sueltas de todas las tiendas de México y compra con retiro en sucursal o envío seguro.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 space-y-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                  <Gavel className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-900 dark:text-white">
+                  Subastas Anti-Trolls
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Pujas en tiempo real con sistema de reputación, reasignación automática a runner-up y strikes por incumplimiento.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 space-y-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                  <Store className="w-4 h-4" />
+                </div>
+                <div className="text-xs font-bold text-slate-900 dark:text-white">
+                  ¿Tienes una Tienda TCG?
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Abre tu tienda en segundos: obtén tu propio subdominio web, Punto de Venta POS y sincronización de inventario.
+                </p>
+              </div>
+            </div>
+
+            {/* Actions for Regular User */}
+            <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
+              <Link
+                href="/marketplace"
+                className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                Ir al Marketplace TCG
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+
+              <Link
+                href="/subastas"
+                className="w-full sm:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 text-xs font-bold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Gavel className="w-4 h-4 text-amber-500" />
+                Ver Subastas en Vivo
+              </Link>
+
+              <button
+                type="button"
+                onClick={() => setIsRegisterModalOpen(true)}
+                className="w-full sm:w-auto sm:ml-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <PlusCircle className="w-4 h-4" />
+                Registrar Mi Tienda TCG
+              </button>
+            </div>
+
+            {/* Quick Demo Switcher Hint */}
+            <div className="p-3.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-xs text-blue-900 dark:text-blue-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                <span>
+                  <strong>Tip de Demostración:</strong> Si deseas explorar el ERP, usa el selector superior para cambiar a <strong>Carlos Gómez (Dueño Omega TCG)</strong> o a <strong>Super Admin</strong>.
+                </span>
+              </div>
+            </div>
+          </div>
+        </main>
+        <Footer />
+        <RegisterStoreModal
+          isOpen={isRegisterModalOpen}
+          onClose={() => setIsRegisterModalOpen(false)}
+        />
+      </div>
+    );
+  }
 
   if (!currentTenant) return null;
 
@@ -715,24 +1017,35 @@ export default function DashboardPage() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Panel de Tienda (SaaS ERP)
+                  {currentUser.role === 'store_admin' ? 'Mi Tienda (SaaS ERP)' : 'Panel de Tienda (SaaS ERP)'}
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
                   {currentTenant.status === 'active' ? 'Tienda Activa' : 'Suspendida'}
                 </span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
-                <select
-                  value={currentTenantId}
-                  onChange={(e) => handleSwitchTenant(e.target.value)}
-                  className="bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white font-bold text-sm border border-slate-300 dark:border-slate-800 rounded-lg px-2.5 py-1 focus:outline-none focus:border-blue-600 cursor-pointer"
-                >
-                  {tenants.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} ({t.slug})
-                    </option>
-                  ))}
-                </select>
+                {currentUser.role === 'superadmin' ? (
+                  <select
+                    value={currentTenantId}
+                    onChange={(e) => handleSwitchTenant(e.target.value)}
+                    className="bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-white font-bold text-sm border border-slate-300 dark:border-slate-800 rounded-lg px-2.5 py-1 focus:outline-none focus:border-blue-600 cursor-pointer"
+                  >
+                    {tenants.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.slug})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-black text-slate-900 dark:text-white">
+                      {currentTenant.name}
+                    </span>
+                    <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                      {currentTenant.slug}
+                    </span>
+                  </div>
+                )}
 
                 <Link
                   href={`/tienda/${currentTenant.slug}`}
@@ -742,12 +1055,50 @@ export default function DashboardPage() {
                   Ver Storefront Público
                   <ExternalLink className="w-3.5 h-3.5" />
                 </Link>
+
+                <Link
+                  href={`/tienda/${currentTenant.slug}/login`}
+                  target="_blank"
+                  className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1 transition font-medium cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5 text-amber-500" />
+                  Portal Staff
+                </Link>
               </div>
             </div>
           </div>
 
-          {/* Quick Metrics / Storage quota badge */}
-          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+          {/* Quick Metrics / Storage quota badge & Action shortcuts */}
+          <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
+            {/* Direct Marketplace link for Store Owner without separate account */}
+            <Link
+              href="/marketplace"
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <ShoppingBag className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              Marketplace Oficial
+            </Link>
+
+            {/* Notification Sound Toggle (Audio 2 requirement) */}
+            <button
+              type="button"
+              onClick={() => {
+                const nextState = !soundAlertsEnabled;
+                setSoundAlertsEnabled(nextState);
+                if (typeof window !== 'undefined') {
+                  window.localStorage.setItem('tcg_sound_alerts_enabled', String(nextState));
+                }
+              }}
+              title={soundAlertsEnabled ? 'Alertas sonoras activadas' : 'Alertas sonoras desactivadas'}
+              className={`p-2 rounded-xl border text-xs font-bold flex items-center gap-1 transition cursor-pointer ${
+                soundAlertsEnabled
+                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border-slate-300 dark:border-slate-700'
+              }`}
+            >
+              {soundAlertsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            </button>
+
             <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-right">
               <div className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold tracking-wider">
                 Límite de Catálogo (Tier Piloto)
@@ -770,40 +1121,80 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* Tab Navigation */}
+      {/* Tab Navigation with strict Role & Permission gating */}
       <div className="bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex overflow-x-auto gap-2 py-2">
-          {[
-            { id: 'inventory', label: 'Inventario Universal', icon: Layers },
-            { id: 'pos', label: 'Punto de Venta (POS)', icon: DollarSign },
-            {
-              id: 'reservations',
-              label: `Reservas Web (${orders.filter((o) => o.status === 'pending_pickup').length})`,
-              icon: ShoppingBag,
-            },
-            { id: 'tournaments', label: `Torneos (${tournaments.length})`, icon: Trophy },
-            { id: 'reports', label: 'Finanzas & Tickets', icon: TrendingUp },
-            { id: 'team', label: `Empleados y Roles (${members.length})`, icon: Users },
-            { id: 'settings', label: 'Ajustes de Tienda', icon: Settings },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
-                  isActive
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-900'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            );
-          })}
+          {(() => {
+            const isStaff = currentUser.role === 'store_staff';
+            const staffPerms = currentUser.staff_permissions;
+
+            const tabCandidates = [
+              (!isStaff || staffPerms?.can_manage_inventory !== false) && {
+                id: 'inventory',
+                label: 'Inventario Universal',
+                icon: Layers,
+              },
+              (!isStaff || staffPerms?.can_use_pos !== false) && {
+                id: 'pos',
+                label: 'Punto de Venta (POS)',
+                icon: DollarSign,
+              },
+              {
+                id: 'reservations',
+                label: `Reservas Web (${orders.filter((o) => o.status === 'pending_pickup').length})`,
+                icon: ShoppingBag,
+              },
+              (!isStaff || staffPerms?.can_manage_tournaments !== false) && {
+                id: 'tournaments',
+                label: `Torneos (${tournaments.length})`,
+                icon: Trophy,
+              },
+              (!isStaff || staffPerms?.can_view_finances === true) && {
+                id: 'reports',
+                label: 'Finanzas & Tickets',
+                icon: TrendingUp,
+              },
+              !isStaff && {
+                id: 'team',
+                label: `Empleados y Roles (${members.length})`,
+                icon: Users,
+              },
+              (!isStaff || staffPerms?.can_edit_landing === true) && {
+                id: 'settings',
+                label: 'Ajustes & Storefront',
+                icon: Settings,
+              },
+              !isStaff && {
+                id: 'support',
+                label: `Soporte Super Admin (${supportMessages.length})`,
+                icon: MessageSquare,
+              },
+            ].filter(Boolean) as {
+              id: typeof activeTab;
+              label: string;
+              icon: React.ComponentType<{ className?: string }>;
+            }[];
+
+            return tabCandidates.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-900'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              );
+            });
+          })()}
         </div>
       </div>
 
@@ -1928,21 +2319,57 @@ export default function DashboardPage() {
         {/* ========================================================================= */}
         {activeTab === 'team' && (
           <div className="space-y-4 animate-fade-in">
-            <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+            {/* Notice when a member was recently registered */}
+            {memberCreatedNotice && (
+              <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-start justify-between gap-3 shadow-xs">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                      Cuenta de Colaborador Habilitada
+                    </h4>
+                    <p className="text-xs text-emerald-800 dark:text-emerald-300 mt-0.5">
+                      {memberCreatedNotice}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMemberCreatedNotice(null)}
+                  className="text-emerald-700 dark:text-emerald-400 hover:text-emerald-900 cursor-pointer p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">Control de Personal y Roles</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Asigna permisos a cajeros, administradores y jueces
+                  Crea cuentas para tus ayudantes y define sus permisos de inventario, torneos o finanzas
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsMemberModalOpen(true)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                Agregar Empleado
-              </button>
+
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/tienda/${currentTenant.slug}/login`}
+                  target="_blank"
+                  className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5 text-amber-500" />
+                  Portal Staff
+                </Link>
+
+                <button
+                  type="button"
+                  onClick={() => setIsMemberModalOpen(true)}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-4 h-4" />
+                  Agregar Empleado
+                </button>
+              </div>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
@@ -1950,43 +2377,50 @@ export default function DashboardPage() {
                 <thead className="bg-slate-50 dark:bg-slate-950/70 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 uppercase font-mono text-[10px]">
                   <tr>
                     <th className="px-4 py-3">Nombre</th>
-                    <th className="px-4 py-3">Email</th>
-                    <th className="px-4 py-3">Rol / Permisos</th>
+                    <th className="px-4 py-3">Email de Acceso</th>
+                    <th className="px-4 py-3">Rol / Permisos Delegados</th>
                     <th className="px-4 py-3 text-right">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                   {members.map((m) => (
                     <tr key={m.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                      <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{m.user_name || 'Empleado'}</td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{m.user_email || 'N/A'}</td>
+                      <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold flex items-center justify-center text-xs">
+                            {m.user_name ? m.user_name.charAt(0).toUpperCase() : 'E'}
+                          </div>
+                          <span>{m.user_name || 'Empleado'}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400 font-mono text-[11px]">{m.user_email || 'N/A'}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-400 border border-blue-200 dark:border-blue-800 uppercase font-bold">
                             {m.role}
                           </span>
                           {m.can_delete_inventory && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400 border border-rose-200 dark:border-rose-800 font-medium">
                               Eliminar Stock
                             </span>
                           )}
                           {m.can_edit_inventory && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-medium">
                               Editar Stock
                             </span>
                           )}
                           {m.can_manage_tournaments && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400 border border-amber-200 dark:border-amber-800 font-medium">
                               Torneos
                             </span>
                           )}
                           {m.can_view_finance && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-medium">
                               Finanzas
                             </span>
                           )}
                           {m.can_create_tickets && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-400 border border-purple-200 dark:border-purple-800">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-400 border border-purple-200 dark:border-purple-800 font-medium">
                               Cobro POS
                             </span>
                           )}
@@ -1996,10 +2430,13 @@ export default function DashboardPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            dataStore.removeMember(m.id);
-                            refreshCurrentData();
+                            if (confirm(`¿Eliminar la cuenta de colaborador de ${m.user_name}?`)) {
+                              dataStore.removeMember(m.id);
+                              refreshCurrentData();
+                            }
                           }}
-                          className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
+                          className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer transition"
+                          title="Eliminar colaborador"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -2013,15 +2450,29 @@ export default function DashboardPage() {
         )}
 
         {/* ========================================================================= */}
-        {/* TAB 6: AJUSTES DE TIENDA */}
+        {/* TAB 6: AJUSTES & STOREFRONT CUSTOMIZATION */}
         {/* ========================================================================= */}
         {activeTab === 'settings' && (
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-6 animate-fade-in max-w-3xl shadow-xs">
-            <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">Configuración de la Tienda</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Información visible en tu Storefront público y reservas
-              </p>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-6 animate-fade-in max-w-4xl shadow-xs">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Identidad y Personalización de Storefront
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Modifica los colores, logotipo, banners, datos de contacto y avisos visibles en tu subdominio público
+                </p>
+              </div>
+
+              <Link
+                href={`/tienda/${currentTenant.slug}`}
+                target="_blank"
+                className="px-4 py-2 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-blue-100 transition cursor-pointer"
+              >
+                <Eye className="w-4 h-4" />
+                Ver Storefront en Vivo
+                <ExternalLink className="w-3 h-3" />
+              </Link>
             </div>
 
             <form
@@ -2035,24 +2486,148 @@ export default function DashboardPage() {
                   alert('El WhatsApp debe tener exactamente 10 dígitos numéricos (México +52).');
                   return;
                 }
-                alert('Ajustes guardados con éxito.');
+
+                dataStore.updateTenant({
+                  id: currentTenant.id,
+                  name: settingsName.trim() || currentTenant.name,
+                  tagline: settingsTagline.trim(),
+                  description: settingsDescription.trim(),
+                  address: settingsAddress.trim(),
+                  phone: settingsPhone.trim(),
+                  whatsapp: settingsWhatsapp.trim(),
+                  theme_color: settingsThemeColor,
+                  logo_url: settingsLogoUrl.trim(),
+                  banner_url: settingsBannerUrl.trim(),
+                  is_hiring: settingsIsHiring,
+                  hiring_title: settingsHiringTitle.trim(),
+                  hiring_description: settingsHiringDesc.trim(),
+                });
+
+                setTenants(dataStore.getTenants());
+                alert('¡Configuración de la tienda y apariencia guardadas con éxito!');
               }}
-              className="space-y-4 text-xs"
+              className="space-y-5 text-xs"
             >
-              <div>
-                <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Nombre de la Tienda</label>
-                <input
-                  type="text"
-                  defaultValue={currentTenant.name}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
-                />
+              {/* Basic Info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">
+                    Nombre Oficial de la Tienda *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={settingsName}
+                    onChange={(e) => setSettingsName(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">
+                    Eslogan / Tagline Comercial
+                  </label>
+                  <input
+                    type="text"
+                    value={settingsTagline}
+                    onChange={(e) => setSettingsTagline(e.target.value)}
+                    placeholder="Ej. Tu santuario de cartas coleccionables"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {/* Theme Color Picker */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Palette className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span className="font-bold text-slate-900 dark:text-white text-xs">
+                    Color Distintivo del Storefront
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {[
+                    { label: 'Azul Eléctrico', hex: '#2563eb' },
+                    { label: 'Índigo Moderno', hex: '#4f46e5' },
+                    { label: 'Esmeralda', hex: '#059669' },
+                    { label: 'Ámbar Cálido', hex: '#d97706' },
+                    { label: 'Rosa Neón', hex: '#e11d48' },
+                    { label: 'Púrpura TCG', hex: '#7c3aed' },
+                  ].map((preset) => (
+                    <button
+                      key={preset.hex}
+                      type="button"
+                      onClick={() => setSettingsThemeColor(preset.hex)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border transition cursor-pointer ${
+                        settingsThemeColor.toLowerCase() === preset.hex.toLowerCase()
+                          ? 'border-slate-900 dark:border-white ring-2 ring-blue-500/30'
+                          : 'border-slate-200 dark:border-slate-800 opacity-80 hover:opacity-100'
+                      }`}
+                    >
+                      <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: preset.hex }} />
+                      <span className="text-slate-800 dark:text-slate-200 text-[11px]">{preset.label}</span>
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="text-[11px] text-slate-400">Personalizado:</span>
+                    <input
+                      type="color"
+                      value={settingsThemeColor}
+                      onChange={(e) => setSettingsThemeColor(e.target.value)}
+                      className="w-8 h-8 rounded-lg cursor-pointer border border-slate-300 dark:border-slate-700 bg-transparent"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Logo and Banner URLs with live preview */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold block">
+                    URL del Logo de la Tienda
+                  </label>
+                  <input
+                    type="url"
+                    value={settingsLogoUrl}
+                    onChange={(e) => setSettingsLogoUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono text-[11px]"
+                  />
+                  {settingsLogoUrl && (
+                    <div className="w-16 h-16 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-100 dark:bg-slate-950 p-1 flex items-center justify-center">
+                      <img src={settingsLogoUrl} alt="Logo Preview" className="max-w-full max-h-full object-contain" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold block">
+                    URL del Banner Principal
+                  </label>
+                  <input
+                    type="url"
+                    value={settingsBannerUrl}
+                    onChange={(e) => setSettingsBannerUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono text-[11px]"
+                  />
+                  {settingsBannerUrl && (
+                    <div className="w-full h-16 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-100 dark:bg-slate-950">
+                      <img src={settingsBannerUrl} alt="Banner Preview" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
-                <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Eslogan / Tagline</label>
-                <input
-                  type="text"
-                  defaultValue={currentTenant.tagline}
+                <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">
+                  Descripción / Bio de la Tienda
+                </label>
+                <textarea
+                  rows={2}
+                  value={settingsDescription}
+                  onChange={(e) => setSettingsDescription(e.target.value)}
+                  placeholder="Cuéntale a tu comunidad sobre los juegos que manejas, días de torneo y ambiente..."
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
                 />
               </div>
@@ -2061,15 +2636,18 @@ export default function DashboardPage() {
                 <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Dirección Física</label>
                 <input
                   type="text"
-                  defaultValue={currentTenant.address}
+                  value={settingsAddress}
+                  onChange={(e) => setSettingsAddress(e.target.value)}
+                  placeholder="Ej. Av. Insurgentes Sur #450, Col. Roma Sur, CDMX"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {/* Phone & WhatsApp (Strict 10 digits México) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Teléfono Celular</label>
+                    <label className="text-slate-700 dark:text-slate-300 font-semibold">Teléfono Celular de Atención</label>
                     <span className="text-[10px] text-slate-400 font-mono">{settingsPhone.length}/10</span>
                   </div>
                   <input
@@ -2080,11 +2658,11 @@ export default function DashboardPage() {
                     placeholder="10 dígitos (ej. 5512345678)"
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono"
                   />
-                  <p className="text-[10px] text-slate-400 mt-1">Solo números, 10 dígitos (sin lada +52 ni caracteres especiales).</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Solo números, 10 dígitos (sin lada +52 ni guiones).</p>
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-slate-700 dark:text-slate-300 font-semibold">WhatsApp de Tienda</label>
+                    <label className="text-slate-700 dark:text-slate-300 font-semibold">WhatsApp de Pedidos y Envíos</label>
                     <span className="text-[10px] text-slate-400 font-mono">{settingsWhatsapp.length}/10</span>
                   </div>
                   <input
@@ -2095,39 +2673,177 @@ export default function DashboardPage() {
                     placeholder="10 dígitos (ej. 5587654321)"
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono"
                   />
-                  <p className="text-[10px] text-slate-400 mt-1">Solo números, 10 dígitos (sin lada +52 ni caracteres especiales).</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Solo números, 10 dígitos (sin lada +52 ni guiones).</p>
                 </div>
               </div>
 
-              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
+              {/* Hiring Banner Section */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="font-bold text-slate-900 dark:text-white block">Sección de Contrataciones</span>
                     <span className="text-slate-500 dark:text-slate-400 text-[11px]">
-                      Muestra un banner de &quot;Buscamos personal&quot; en tu tienda online
+                      Muestra un banner llamativo de &quot;Buscamos personal&quot; en tu storefront
                     </span>
                   </div>
                   <input
                     type="checkbox"
-                    defaultChecked={currentTenant.is_hiring}
+                    checked={settingsIsHiring}
+                    onChange={(e) => setSettingsIsHiring(e.target.checked)}
                     className="w-4 h-4 text-blue-600 rounded cursor-pointer"
                   />
                 </div>
-                <input
-                  type="text"
-                  placeholder="Título de la vacante"
-                  defaultValue={currentTenant.hiring_title}
-                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
-                />
+                {settingsIsHiring && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <input
+                      type="text"
+                      placeholder="Título de la vacante (Ej. Juez de Yu-Gi-Oh! / Cajero)"
+                      value={settingsHiringTitle}
+                      onChange={(e) => setSettingsHiringTitle(e.target.value)}
+                      className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Breve descripción o cómo postularse"
+                      value={settingsHiringDesc}
+                      onChange={(e) => setSettingsHiringDesc(e.target.value)}
+                      className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </div>
+                )}
               </div>
 
-              <button
-                type="submit"
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition cursor-pointer"
-              >
-                Guardar Cambios
-              </button>
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition cursor-pointer shadow-xs"
+                >
+                  Guardar Personalización
+                </button>
+              </div>
             </form>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* TAB 7: SOPORTE DIRECTO CON SUPER ADMIN (JULIO CABRERA) */}
+        {/* ========================================================================= */}
+        {activeTab === 'support' && (
+          <div className="space-y-6 animate-fade-in max-w-4xl">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950/70 dark:text-blue-300 border border-blue-200 dark:border-blue-800 uppercase tracking-wider">
+                    Canal Directo para Tiendas Afiliadas
+                  </span>
+                </div>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white mt-1 flex items-center gap-2">
+                  <MessageSquare className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                  Soporte con Super Admin (Julio Cabrera)
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Comunícate directamente con la administración de la plataforma para solicitar expansión de catálogo, integraciones o soporte técnico.
+                </p>
+              </div>
+
+              <div className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">Tiempo de Respuesta</span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">&lt; 2 horas</span>
+              </div>
+            </div>
+
+            {/* Form to submit new support inquiry */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-4">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white">Enviar Nuevo Mensaje a Julio Cabrera</h4>
+              <form onSubmit={handleSendSupportMessage} className="space-y-3 text-xs">
+                <div>
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold block mb-1">Asunto *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newSupportSubject}
+                    onChange={(e) => setNewSupportSubject(e.target.value)}
+                    placeholder="Ej. Solicitud de ampliación de límite de catálogo a 1,000 cartas"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold block mb-1">Mensaje Detallado *</label>
+                  <textarea
+                    required
+                    rows={4}
+                    value={newSupportText}
+                    onChange={(e) => setNewSupportText(e.target.value)}
+                    placeholder="Escribe tu mensaje, duda o solicitud aquí..."
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isSendingSupport}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center gap-2 shadow-xs transition cursor-pointer"
+                >
+                  <Send className="w-4 h-4" />
+                  {isSendingSupport ? 'Enviando...' : 'Enviar Mensaje a Super Admin'}
+                </button>
+              </form>
+            </div>
+
+            {/* History of messages & responses */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                Historial de Comunicaciones ({supportMessages.length})
+              </h4>
+              {supportMessages.length === 0 ? (
+                <div className="p-8 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                  No hay mensajes de soporte previos con el Super Admin.
+                </div>
+              ) : (
+                supportMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                      <div>
+                        <span className="font-bold text-slate-900 dark:text-white text-sm">{msg.subject}</span>
+                        <div className="text-[11px] text-slate-400">
+                          Enviado el {new Date(msg.created_at).toLocaleString('es-MX')} por {msg.sender_name}
+                        </div>
+                      </div>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          msg.status === 'resolved'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                        }`}
+                      >
+                        {msg.status === 'resolved' ? 'Resuelto' : 'En Revisión'}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{msg.message}</p>
+
+                    {msg.admin_reply && (
+                      <div className="mt-3 p-3.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-blue-900 dark:text-blue-300 flex items-center gap-1.5">
+                            <ShieldCheck className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                            Respuesta Oficial de {msg.admin_replied_by || 'Julio Cabrera (Super Admin)'}
+                          </span>
+                          {msg.admin_replied_at && (
+                            <span className="text-blue-500 text-[10px]">
+                              {new Date(msg.admin_replied_at).toLocaleString('es-MX')}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-blue-950 dark:text-blue-100 whitespace-pre-wrap">{msg.admin_reply}</p>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
       </main>
@@ -2784,15 +3500,39 @@ export default function DashboardPage() {
                 />
               </div>
               <div>
-                <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Correo Electrónico</label>
+                <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">
+                  Correo Electrónico de Acceso *
+                </label>
                 <input
                   type="email"
+                  required
                   value={newMember.user_email}
                   onChange={(e) => setNewMember({ ...newMember, user_email: e.target.value })}
-                  placeholder="luis@tienda.com"
+                  placeholder="empleado@tienda.com"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
                 />
               </div>
+
+              <div>
+                <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">
+                  Contraseña Inicial de Acceso *
+                </label>
+                <div className="relative">
+                  <Key className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <input
+                    type="password"
+                    required
+                    value={newMember.password}
+                    onChange={(e) => setNewMember({ ...newMember, password: e.target.value })}
+                    placeholder="Contraseña segura (ej. Staff2026!)"
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Se hasheará de forma segura con SHA-256. El colaborador iniciará sesión en /tienda/{currentTenant.slug}/login
+                </p>
+              </div>
+
               <div>
                 <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Rol Base</label>
                 <select
@@ -2811,7 +3551,7 @@ export default function DashboardPage() {
               {/* Granular Permissions Checkboxes */}
               <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
                 <span className="font-bold text-slate-900 dark:text-white block text-[11px]">
-                  Permisos Específicos Delegables:
+                  Permisos Específicos Delegados:
                 </span>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -2847,7 +3587,9 @@ export default function DashboardPage() {
                     onChange={(e) => setNewMember({ ...newMember, can_view_finance: e.target.checked })}
                     className="w-4 h-4 text-emerald-600 rounded cursor-pointer"
                   />
-                  <span className="text-slate-700 dark:text-slate-300">Puede ver finanzas, costos y auditoría</span>
+                  <span className="text-slate-700 dark:text-slate-300 font-semibold">
+                    Puede ver finanzas, costos y auditoría (oculto por defecto)
+                  </span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -2857,6 +3599,15 @@ export default function DashboardPage() {
                     className="w-4 h-4 text-purple-600 rounded cursor-pointer"
                   />
                   <span className="text-slate-700 dark:text-slate-300">Puede cobrar en mostrador y emitir tickets</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newMember.can_edit_landing}
+                    onChange={(e) => setNewMember({ ...newMember, can_edit_landing: e.target.checked })}
+                    className="w-4 h-4 text-blue-600 rounded cursor-pointer"
+                  />
+                  <span className="text-slate-700 dark:text-slate-300">Puede editar diseño de Storefront y vacantes</span>
                 </label>
               </div>
 
@@ -3760,6 +4511,11 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      <RegisterStoreModal
+        isOpen={isRegisterModalOpen}
+        onClose={() => setIsRegisterModalOpen(false)}
+      />
 
       {/* Dashboard Footer with Legal & Privacy Modals */}
       <Footer variant="dashboard" storeName={currentTenant.name} />

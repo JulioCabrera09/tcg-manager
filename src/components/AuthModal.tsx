@@ -1,6 +1,5 @@
-'use client';
-
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   X,
   User,
@@ -14,6 +13,7 @@ import {
   UserCheck,
   ArrowRight,
   Store,
+  Sparkles,
 } from 'lucide-react';
 import { UserProfile } from '@/types/database';
 import { dataStore } from '@/lib/store';
@@ -27,8 +27,9 @@ import {
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  currentUser: UserProfile;
-  onUserChange: (user: UserProfile) => void;
+  currentUser?: UserProfile;
+  onUserChange?: (user: UserProfile) => void;
+  onUserAuthenticated?: (user: UserProfile) => void;
 }
 
 export default function AuthModal({
@@ -36,7 +37,15 @@ export default function AuthModal({
   onClose,
   currentUser,
   onUserChange,
+  onUserAuthenticated,
 }: AuthModalProps) {
+  const router = useRouter();
+  const effectiveUser = currentUser || dataStore.getCurrentUser();
+
+  const notifyUserChange = (user: UserProfile) => {
+    if (onUserChange) onUserChange(user);
+    if (onUserAuthenticated) onUserAuthenticated(user);
+  };
   const [activeTab, setActiveTab] = useState<'login' | 'register' | 'recovery' | 'switch'>('login');
   
   // Login form
@@ -46,6 +55,7 @@ export default function AuthModal({
 
   // Register form
   const [regName, setRegName] = useState('');
+  const [regAlias, setRegAlias] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regCity, setRegCity] = useState('CDMX');
@@ -83,7 +93,7 @@ export default function AuthModal({
         dataStore.updateUserProfile(found.id, { password_hash: hash });
       }
       dataStore.setCurrentUserId(found.id);
-      onUserChange(found);
+      notifyUserChange(found);
       onClose();
     } else {
       // Demo login: guardar con hash seguro
@@ -100,7 +110,7 @@ export default function AuthModal({
         rating: 5.0,
         total_trades: 1,
       });
-      onUserChange(newUser);
+      notifyUserChange(newUser);
       onClose();
     }
   };
@@ -130,10 +140,13 @@ export default function AuthModal({
 
     const created = dataStore.addUserProfile({
       name: regName.trim(),
+      alias: regAlias.trim() || regName.trim().replace(/\s+/g, '_'),
       email: regEmail.trim(),
       phone: sanitizedPhone || undefined,
       city: regCity.trim() || 'CDMX',
       password_hash,
+      role: 'regular_user',
+      auth_provider: 'email',
       strikes: 0,
       is_banned: false,
       reputation_positive: 10,
@@ -145,10 +158,36 @@ export default function AuthModal({
 
     setRegSuccess(true);
     setTimeout(() => {
-      onUserChange(created);
+      notifyUserChange(created);
       onClose();
       setRegSuccess(false);
-    }, 1200);
+      router.push('/mi-carpeta');
+    }, 1000);
+  };
+
+  const handleGoogleAuth = () => {
+    let googleUser = users.find((u) => u.email === 'santiago.google@gmail.com');
+    if (!googleUser) {
+      googleUser = dataStore.addUserProfile({
+        name: 'Santiago Morales',
+        alias: 'SantiTCG_Google',
+        email: 'santiago.google@gmail.com',
+        auth_provider: 'google',
+        role: 'regular_user',
+        city: 'CDMX',
+        strikes: 0,
+        is_banned: false,
+        reputation_positive: 15,
+        reputation_negative: 0,
+        rating: 5.0,
+        total_trades: 4,
+        is_verified_store: false,
+      });
+    }
+    dataStore.setCurrentUserId(googleUser.id);
+    notifyUserChange(googleUser);
+    onClose();
+    router.push('/mi-carpeta');
   };
 
   const handleRecovery = (e: React.FormEvent) => {
@@ -159,7 +198,7 @@ export default function AuthModal({
 
   const handleSwitchUser = (user: UserProfile) => {
     dataStore.setCurrentUserId(user.id);
-    onUserChange(user);
+    notifyUserChange(user);
     onClose();
   };
 
@@ -196,8 +235,8 @@ export default function AuthModal({
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
             <div className="text-xs">
               <span className="text-slate-500 dark:text-slate-400">Sesión activa: </span>
-              <strong className="text-slate-900 dark:text-white font-bold">{currentUser.name}</strong>
-              <span className="text-slate-500 dark:text-slate-400 ml-1">({currentUser.city || 'México'})</span>
+              <strong className="text-slate-900 dark:text-white font-bold">{effectiveUser ? effectiveUser.name : 'Invitado'}</strong>
+              <span className="text-slate-500 dark:text-slate-400 ml-1">({effectiveUser?.city || 'México'})</span>
             </div>
           </div>
           <button
@@ -261,7 +300,42 @@ export default function AuthModal({
         <div className="p-6">
           {/* TAB: LOGIN */}
           {activeTab === 'login' && (
-            <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-4">
+              {/* Google 1-Click Login Button */}
+              <button
+                type="button"
+                onClick={handleGoogleAuth}
+                className="w-full py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition flex items-center justify-center gap-2.5 cursor-pointer shadow-xs"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  />
+                </svg>
+                <span>Iniciar Sesión con Google</span>
+              </button>
+
+              <div className="relative flex items-center justify-center my-3">
+                <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
+                <span className="bg-white dark:bg-slate-900 px-2 text-[10px] text-slate-400 font-semibold uppercase">
+                  o con correo registrado
+                </span>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-4">
               {loginError && (
                 <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
@@ -328,34 +402,91 @@ export default function AuthModal({
                 Iniciar Sesión
               </button>
             </form>
+          </div>
           )}
 
           {/* TAB: REGISTER */}
           {activeTab === 'register' && (
-            <form onSubmit={handleRegister} className="space-y-3.5">
-              {regSuccess && (
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>¡Cuenta creada con éxito! Iniciando sesión...</span>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Nombre Completo / Apodo de Jugador
-                </label>
-                <div className="relative">
-                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    required
-                    value={regName}
-                    onChange={(e) => setRegName(e.target.value)}
-                    placeholder="Ej. Santiago TCG Master"
-                    className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs outline-hidden focus:border-blue-500"
+            <div className="space-y-3.5">
+              {/* Google 1-Click Register Button */}
+              <button
+                type="button"
+                onClick={handleGoogleAuth}
+                className="w-full py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition flex items-center justify-center gap-2.5 cursor-pointer shadow-xs"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
                   />
-                </div>
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  />
+                </svg>
+                <span>Registrarse Rápido con Google</span>
+              </button>
+
+              <div className="relative flex items-center justify-center my-2">
+                <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
+                <span className="bg-white dark:bg-slate-900 px-2 text-[10px] text-slate-400 font-semibold uppercase">
+                  o llena tus datos
+                </span>
               </div>
+
+              <form onSubmit={handleRegister} className="space-y-3.5">
+                {regSuccess && (
+                  <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>¡Cuenta creada con éxito! Abriendo tu Carpeta Digital...</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Nombre Completo *
+                    </label>
+                    <div className="relative">
+                      <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        required
+                        value={regName}
+                        onChange={(e) => {
+                          setRegName(e.target.value);
+                          if (!regAlias) {
+                            setRegAlias(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '_'));
+                          }
+                        }}
+                        placeholder="Santiago Morales"
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs outline-hidden focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Alias Público (visible en vitrinas) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={regAlias}
+                      onChange={(e) => setRegAlias(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+                      placeholder="SantiTCG_CDMX"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-mono outline-hidden focus:border-blue-500"
+                    />
+                  </div>
+                </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -450,7 +581,8 @@ export default function AuthModal({
                 <span>Cifrado criptográfico SHA-256 + Salt activado</span>
               </div>
             </form>
-          )}
+          </div>
+        )}
 
           {/* TAB: PASSWORD RECOVERY */}
           {activeTab === 'recovery' && (
@@ -518,7 +650,7 @@ export default function AuthModal({
               </p>
               <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                 {users.map((u) => {
-                  const isCurrent = u.id === currentUser.id;
+                  const isCurrent = effectiveUser ? u.id === effectiveUser.id : false;
                   return (
                     <div
                       key={u.id}

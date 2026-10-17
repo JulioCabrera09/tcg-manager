@@ -30,12 +30,14 @@ import {
 import { dataStore } from '@/lib/store';
 import { Auction, AuctionBid, AuctionMessage, UserProfile } from '@/types/database';
 import { useAuctionRealtime } from '@/lib/supabase/useRealtime';
+import AuthModal from '@/components/AuthModal';
 
 export default function AuctionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const [auction, setAuction] = useState<Auction | null>(null);
   const [messages, setMessages] = useState<AuctionMessage[]>([]);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
   // Bidding state
   const [bidAmount, setBidAmount] = useState<number>(0);
@@ -123,11 +125,20 @@ export default function AuctionDetailPage({ params }: { params: Promise<{ id: st
     setBidError('');
     setBidSuccess('');
 
+    if (!currentUser || currentUser.id === 'usr-guest') {
+      setIsAuthModalOpen(true);
+      return;
+    }
+
     try {
+      const bidderDisplayName = currentUser.alias
+        ? `${currentUser.name} (@${currentUser.alias})`
+        : currentUser.name;
       const updated = dataStore.placeBid(
         auction.id,
         bidAmount,
-        currentUser ? currentUser.name : 'Coleccionista Pro'
+        bidderDisplayName,
+        currentUser.id
       );
       setAuction(updated);
       setBidSuccess(`¡Tu puja de $${bidAmount} MXN ha sido registrada exitosamente!`);
@@ -796,6 +807,16 @@ export default function AuctionDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
       )}
+
+      {/* Auth Modal for Unauthenticated Bidders */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onUserAuthenticated={(u: UserProfile) => {
+          setCurrentUser(u);
+          loadAuctionData();
+        }}
+      />
     </div>
   );
 }

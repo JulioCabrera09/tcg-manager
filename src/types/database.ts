@@ -252,11 +252,23 @@ export interface Auction {
   created_at: string;
 }
 
+export type UserRole = 'superadmin' | 'admin' | 'store_admin' | 'store_staff' | 'regular_user';
+
+export interface StaffPermissions {
+  can_manage_inventory: boolean;
+  can_use_pos: boolean;
+  can_manage_tournaments: boolean;
+  can_view_finances: boolean;
+  can_edit_landing: boolean;
+}
+
 export interface UserProfile {
   id: string;
   name: string;
+  alias?: string; // Nombre público visible en vitrinas y subastas
   email: string;
   phone?: string;
+  whatsapp_phone?: string;
   city?: string;
   avatar_url?: string;
   strikes: number; // Max 3
@@ -266,9 +278,53 @@ export interface UserProfile {
   rating?: number; // 0.0 to 5.0
   total_trades?: number;
   password_hash?: string; // Hash SHA-256 seguro (nunca texto plano)
+  auth_provider?: 'email' | 'google';
   is_verified_store?: boolean;
   store_slug?: string;
   store_name?: string;
+  role?: UserRole;
+  tenant_id?: string;
+  staff_permissions?: StaffPermissions;
+  created_at?: string;
+}
+
+export interface AppNotification {
+  id: string;
+  recipient_id: string; // ID del usuario o tenant_id
+  recipient_type?: 'user' | 'store';
+  title: string;
+  message: string;
+  type:
+    | 'auction_won'
+    | 'auction_outbid'
+    | 'new_message'
+    | 'offer_received'
+    | 'order_created'
+    | 'tournament_alert'
+    | 'system';
+  link_url?: string;
+  action_url?: string;
+  read: boolean;
+  created_at: string;
+}
+
+export interface AdminSupportMessage {
+  id: string;
+  store_id: string;
+  store_name: string;
+  store_slug?: string;
+  sender_id?: string;
+  sender_name: string;
+  sender_email?: string;
+  sender_role: 'store_admin' | 'superadmin' | 'admin';
+  subject?: string;
+  message?: string;
+  content?: string;
+  status?: 'open' | 'in_progress' | 'resolved';
+  admin_reply?: string;
+  admin_replied_at?: string;
+  admin_replied_by?: string;
+  created_at: string;
 }
 
 // VIRTUAL BINDERS (CARPETAS VIRTUALES), CARD SHOWCASE, OFFERS & SALES

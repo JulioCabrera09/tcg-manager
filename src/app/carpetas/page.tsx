@@ -44,6 +44,11 @@ export default function CarpetasMarketplacePage() {
 
   useEffect(() => {
     loadData();
+    const handleUserChanged = () => {
+      loadData();
+    };
+    window.addEventListener('tcg_user_changed', handleUserChanged);
+    return () => window.removeEventListener('tcg_user_changed', handleUserChanged);
   }, []);
 
   const loadData = () => {

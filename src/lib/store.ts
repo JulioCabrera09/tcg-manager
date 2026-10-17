@@ -18,6 +18,10 @@ import {
   CardOffer,
   OfferMessage,
   SalesRecord,
+  AppNotification,
+  AdminSupportMessage,
+  StaffPermissions,
+  UserRole,
 } from '@/types/database';
 import {
   INITIAL_TENANTS,
@@ -34,6 +38,8 @@ import {
   INITIAL_OFFERS,
   INITIAL_OFFER_MESSAGES,
   INITIAL_SALES_RECORDS,
+  INITIAL_NOTIFICATIONS,
+  INITIAL_SUPPORT_MESSAGES,
 } from './mockData';
 import { syncService } from '@/lib/supabase/syncService';
 
@@ -54,6 +60,8 @@ const STORAGE_KEYS = {
   OFFER_MESSAGES: 'tcg_offer_messages_v1',
   SALES_RECORDS: 'tcg_sales_records_v1',
   CURRENT_USER_ID: 'tcg_current_user_id_v1',
+  NOTIFICATIONS: 'tcg_notifications_v1',
+  SUPPORT_MESSAGES: 'tcg_support_messages_v1',
 };
 
 function getStorage<T>(key: string, fallback: T): T {
@@ -563,12 +571,15 @@ export const dataStore = {
 
   getCurrentUser(): UserProfile {
     const users = this.getUsers();
-    const currentId = getStorage<string>(STORAGE_KEYS.CURRENT_USER_ID, 'usr-current');
+    const currentId = getStorage<string>(STORAGE_KEYS.CURRENT_USER_ID, 'usr-superadmin');
     return users.find((u) => u.id === currentId) || users[0] || INITIAL_USERS[0];
   },
 
   setCurrentUserId(id: string) {
     setStorage(STORAGE_KEYS.CURRENT_USER_ID, id);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tcg_user_changed'));
+    }
   },
 
   addUserProfile(user: Omit<UserProfile, 'id'>): UserProfile {
@@ -592,6 +603,46 @@ export const dataStore = {
       return users[idx];
     }
     throw new Error('Usuario no encontrado');
+  },
+
+  deleteUser(userId: string): boolean {
+    if (userId === 'usr-superadmin') {
+      throw new Error('La cuenta principal de Super Admin (Julio Cabrera) está blindada y no puede ser eliminada.');
+    }
+    const users = this.getUsers().filter((u) => u.id !== userId);
+    setStorage(STORAGE_KEYS.USERS, users);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tcg_user_changed'));
+    }
+    return true;
+  },
+
+  createStaffUser(
+    tenantId: string,
+    name: string,
+    email: string,
+    passwordHash: string,
+    permissions: StaffPermissions
+  ): UserProfile {
+    const tenant = this.getTenants().find((t) => t.id === tenantId);
+    const user = this.addUserProfile({
+      name,
+      alias: `${name.replace(/\s+/g, '')}_Staff`,
+      email,
+      password_hash: passwordHash,
+      role: 'store_staff',
+      tenant_id: tenantId,
+      store_slug: tenant?.slug,
+      store_name: tenant?.name,
+      is_verified_store: false,
+      strikes: 0,
+      is_banned: false,
+      reputation_positive: 10,
+      reputation_negative: 0,
+      staff_permissions: permissions,
+      created_at: new Date().toISOString(),
+    });
+    return user;
   },
 
   getTopSellers(): UserProfile[] {
@@ -1436,5 +1487,73 @@ export const dataStore = {
         game: 'Yu-Gi-Oh!',
       },
     ];
+  },
+
+  // NOTIFICATION CENTER (AUDIO 1 & AUDIO 2)
+  getNotifications(recipientId: string): AppNotification[] {
+    const all = getStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
+    return all
+      .filter((n) => n.recipient_id === recipientId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  },
+
+  addNotification(notif: Omit<AppNotification, 'id' | 'created_at' | 'read'>): AppNotification {
+    const all = getStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
+    const created: AppNotification = {
+      ...notif,
+      id: `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      read: false,
+      created_at: new Date().toISOString(),
+    };
+    all.unshift(created);
+    setStorage(STORAGE_KEYS.NOTIFICATIONS, all);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tcg_notifications_changed'));
+    }
+    return created;
+  },
+
+  markNotificationRead(id: string): void {
+    const all = getStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
+    const found = all.find((n) => n.id === id);
+    if (found) {
+      found.read = true;
+      setStorage(STORAGE_KEYS.NOTIFICATIONS, all);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('tcg_notifications_changed'));
+      }
+    }
+  },
+
+  markAllNotificationsRead(recipientId: string): void {
+    const all = getStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, INITIAL_NOTIFICATIONS);
+    all.forEach((n) => {
+      if (n.recipient_id === recipientId) n.read = true;
+    });
+    setStorage(STORAGE_KEYS.NOTIFICATIONS, all);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tcg_notifications_changed'));
+    }
+  },
+
+  // STORE ADMIN <-> SUPER ADMIN DIRECT SUPPORT (AUDIO 2 & AUDIO 3)
+  getAdminSupportMessages(storeId?: string): AdminSupportMessage[] {
+    const all = getStorage<AdminSupportMessage[]>(STORAGE_KEYS.SUPPORT_MESSAGES, INITIAL_SUPPORT_MESSAGES);
+    return storeId ? all.filter((m) => m.store_id === storeId) : all;
+  },
+
+  sendAdminSupportMessage(msg: Omit<AdminSupportMessage, 'id' | 'created_at'>): AdminSupportMessage {
+    const all = getStorage<AdminSupportMessage[]>(STORAGE_KEYS.SUPPORT_MESSAGES, INITIAL_SUPPORT_MESSAGES);
+    const created: AdminSupportMessage = {
+      ...msg,
+      id: `supp-${Date.now()}`,
+      created_at: new Date().toISOString(),
+    };
+    all.push(created);
+    setStorage(STORAGE_KEYS.SUPPORT_MESSAGES, all);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tcg_support_changed'));
+    }
+    return created;
   },
 };
