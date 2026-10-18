@@ -69,13 +69,15 @@ export default function SuperAdminPage() {
     description: '',
   });
 
-  // User Management Filter & Sub-Admin Modal
+  // User Management Filter & User Creation Modal
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userRoleFilter, setUserRoleFilter] = useState<string>('ALL');
-  const [isAddSubadminModalOpen, setIsAddSubadminModalOpen] = useState(false);
-  const [newSubadminName, setNewSubadminName] = useState('');
-  const [newSubadminEmail, setNewSubadminEmail] = useState('');
-  const [newSubadminPassword, setNewSubadminPassword] = useState('');
+  const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'store_admin' | 'store_staff' | 'regular_user'>('admin');
+  const [newUserTenantId, setNewUserTenantId] = useState<string>('tenant-omega-01');
 
   // Support Reply State
   const [selectedStoreForSupport, setSelectedStoreForSupport] = useState<string>('tenant-omega-01');
@@ -223,17 +225,27 @@ export default function SuperAdminPage() {
     }
   };
 
-  const handleCreateSubadmin = async (e: React.FormEvent) => {
+  const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSubadminName.trim() || !newSubadminEmail.trim() || !newSubadminPassword) return;
+    if (!newUserName.trim() || !newUserEmail.trim() || !newUserPassword) return;
 
-    const hash = await hashPassword(newSubadminPassword);
-    dataStore.addUserProfile({
-      name: newSubadminName.trim(),
-      alias: `${newSubadminName.trim().replace(/\s+/g, '')}_Admin`,
-      email: newSubadminEmail.trim(),
+    const hash = await hashPassword(newUserPassword);
+    const selectedTenant = tenants.find((t) => t.id === newUserTenantId) || tenants[0];
+
+    const baseProfile: Omit<UserProfile, 'id'> = {
+      name: newUserName.trim(),
+      alias: `${newUserName.trim().replace(/\s+/g, '')}_${
+        newUserRole === 'admin'
+          ? 'Admin'
+          : newUserRole === 'store_admin'
+          ? 'Owner'
+          : newUserRole === 'store_staff'
+          ? 'Staff'
+          : 'User'
+      }`,
+      email: newUserEmail.trim(),
       password_hash: hash,
-      role: 'admin',
+      role: newUserRole,
       city: 'CDMX',
       strikes: 0,
       is_banned: false,
@@ -241,13 +253,33 @@ export default function SuperAdminPage() {
       reputation_negative: 0,
       rating: 5.0,
       total_trades: 0,
-      is_verified_store: false,
-    });
+      is_verified_store: newUserRole === 'store_admin',
+    };
 
-    setIsAddSubadminModalOpen(false);
-    setNewSubadminName('');
-    setNewSubadminEmail('');
-    setNewSubadminPassword('');
+    if (newUserRole === 'store_admin' || newUserRole === 'store_staff') {
+      baseProfile.tenant_id = selectedTenant?.id;
+      baseProfile.store_name = selectedTenant?.name;
+      baseProfile.store_slug = selectedTenant?.slug;
+    }
+
+    if (newUserRole === 'store_staff') {
+      baseProfile.staff_permissions = {
+        can_manage_inventory: true,
+        can_use_pos: true,
+        can_manage_tournaments: true,
+        can_view_finances: false,
+        can_edit_landing: false,
+      };
+    }
+
+    dataStore.addUserProfile(baseProfile);
+
+    setIsAddUserModalOpen(false);
+    setNewUserName('');
+    setNewUserEmail('');
+    setNewUserPassword('');
+    setNewUserRole('admin');
+    setNewUserTenantId(tenants[0]?.id || 'tenant-omega-01');
     loadData();
   };
 
@@ -367,34 +399,9 @@ export default function SuperAdminPage() {
             </button>
           </form>
 
-          {/* Quick Demo Credentials */}
-          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-              Accesos Rápidos de Prueba:
-            </span>
-            <div className="flex flex-col gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleQuickAdminLogin('usr-superadmin')}
-                className="w-full py-1.5 px-3 rounded-lg bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 font-semibold text-left flex items-center justify-between text-xs cursor-pointer"
-              >
-                <span>Julio Cabrera (Super Admin)</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickAdminLogin('usr-subadmin')}
-                className="w-full py-1.5 px-3 rounded-lg bg-purple-100 hover:bg-purple-200 dark:bg-purple-950/60 dark:hover:bg-purple-900 text-purple-900 dark:text-purple-200 font-semibold text-left flex items-center justify-between text-xs cursor-pointer"
-              >
-                <span>Marco Rivas (Sub-Admin)</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="text-center">
+          <div className="text-center pt-2">
             <Link href="/marketplace" className="text-xs text-blue-600 dark:text-blue-400 hover:underline">
-              Volver al Marketplace
+              ← Volver al Marketplace
             </Link>
           </div>
         </div>
@@ -663,11 +670,11 @@ export default function SuperAdminPage() {
               {currentUser?.role === 'superadmin' && (
                 <button
                   type="button"
-                  onClick={() => setIsAddSubadminModalOpen(true)}
+                  onClick={() => setIsAddUserModalOpen(true)}
                   className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
                 >
                   <UserPlus className="w-4 h-4" />
-                  Crear Cuenta Sub-Admin
+                  Crear Cuenta
                 </button>
               )}
             </div>
@@ -966,29 +973,29 @@ export default function SuperAdminPage() {
         )}
       </main>
 
-      {/* MODAL: SUB-ADMIN CREATION */}
-      {isAddSubadminModalOpen && (
+      {/* MODAL: USER ACCOUNT CREATION */}
+      {isAddUserModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-sm p-6 space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-purple-600" />
-                Crear Cuenta Sub-Admin
+                <UserPlus className="w-4 h-4 text-purple-600" />
+                Crear Cuenta de Usuario
               </h3>
               <button
                 type="button"
-                onClick={() => setIsAddSubadminModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700 dark:hover:text-white"
+                onClick={() => setIsAddUserModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Esta cuenta tendrá permisos para auditar tiendas y catálogo, pero <strong>no podrá eliminar</strong> la cuenta del Super Admin.
+              Registra una nueva cuenta y asígnale su rol en el ecosistema (Sub-Admin, Tienda, Staff o Comprador).
             </p>
 
-            <form onSubmit={handleCreateSubadmin} className="space-y-3 text-xs">
+            <form onSubmit={handleCreateUser} className="space-y-3.5 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Nombre Completo *
@@ -996,9 +1003,9 @@ export default function SuperAdminPage() {
                 <input
                   type="text"
                   required
-                  value={newSubadminName}
-                  onChange={(e) => setNewSubadminName(e.target.value)}
-                  placeholder="Marco Rivas"
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  placeholder="Ej. Roberto Morales"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
                 />
               </div>
@@ -1010,10 +1017,10 @@ export default function SuperAdminPage() {
                 <input
                   type="email"
                   required
-                  value={newSubadminEmail}
-                  onChange={(e) => setNewSubadminEmail(e.target.value)}
-                  placeholder="marco.admin@tcgecosystem.com"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  placeholder="usuario@dominio.com"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono"
                 />
               </div>
 
@@ -1024,26 +1031,66 @@ export default function SuperAdminPage() {
                 <input
                   type="password"
                   required
-                  value={newSubadminPassword}
-                  onChange={(e) => setNewSubadminPassword(e.target.value)}
+                  value={newUserPassword}
+                  onChange={(e) => setNewUserPassword(e.target.value)}
                   placeholder="••••••••"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Tipo de Cuenta *
+                </label>
+                <select
+                  value={newUserRole}
+                  onChange={(e) =>
+                    setNewUserRole(
+                      e.target.value as 'admin' | 'store_admin' | 'store_staff' | 'regular_user'
+                    )
+                  }
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white cursor-pointer font-medium"
+                >
+                  <option value="admin">🛡️ Sub-Admin de plataforma</option>
+                  <option value="store_admin">🏪 Dueño de tienda (Store Owner)</option>
+                  <option value="store_staff">💼 Staff de tienda (Cajero / Operador)</option>
+                  <option value="regular_user">👤 Usuario de marketplace / Comprador común</option>
+                </select>
+              </div>
+
+              {/* Si es dueño o staff de tienda, seleccionar qué tienda le pertenece */}
+              {(newUserRole === 'store_admin' || newUserRole === 'store_staff') && (
+                <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1 text-[11px]">
+                    Tienda Asignada *
+                  </label>
+                  <select
+                    value={newUserTenantId}
+                    onChange={(e) => setNewUserTenantId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs cursor-pointer"
+                  >
+                    {tenants.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.slug}.tcgecosystem.com)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setIsAddSubadminModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl"
+                  onClick={() => setIsAddUserModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold"
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold cursor-pointer"
                 >
-                  Crear Sub-Admin
+                  Crear Cuenta
                 </button>
               </div>
             </form>

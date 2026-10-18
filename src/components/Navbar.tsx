@@ -24,7 +24,6 @@ import {
 import { dataStore } from '@/lib/store';
 import { Tenant, UserProfile } from '@/types/database';
 import { useTheme } from '@/context/ThemeContext';
-import SupabaseConnectionBadge from '@/components/SupabaseConnectionBadge';
 import RoleSwitcher from '@/components/RoleSwitcher';
 import RegisterStoreModal from '@/components/RegisterStoreModal';
 import NotificationCenter from '@/components/NotificationCenter';
@@ -54,7 +53,7 @@ export default function Navbar() {
   }, [pathname]);
 
   const isStorefront = pathname.startsWith('/tienda/');
-  const role = currentUser?.role || 'superadmin';
+  const role = currentUser?.role || 'regular_user';
 
   return (
     <>
@@ -277,8 +276,6 @@ export default function Navbar() {
 
             {/* Role Switcher Demo Tool */}
             <RoleSwitcher />
-
-            <SupabaseConnectionBadge />
 
             {/* Theme Toggle Button */}
             <button

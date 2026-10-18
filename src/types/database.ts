@@ -61,6 +61,7 @@ export interface TenantMember {
   can_manage_tournaments?: boolean;
   can_view_finance?: boolean;
   can_create_tickets?: boolean;
+  can_edit_landing?: boolean;
   created_at: string;
 }
 

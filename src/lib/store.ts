@@ -643,6 +643,35 @@ export const dataStore = {
     return created;
   },
 
+  updateMember(id: string, updates: Partial<TenantMember>): TenantMember {
+    const all = getStorage<TenantMember[]>(STORAGE_KEYS.MEMBERS, INITIAL_MEMBERS);
+    const idx = all.findIndex((m) => m.id === id);
+    if (idx >= 0) {
+      all[idx] = { ...all[idx], ...updates };
+      setStorage(STORAGE_KEYS.MEMBERS, all);
+      if (all[idx].user_id) {
+        try {
+          const user = this.getUsers().find((u) => u.id === all[idx].user_id);
+          if (user) {
+            this.updateUserProfile(user.id, {
+              staff_permissions: {
+                can_manage_inventory: !!all[idx].can_edit_inventory,
+                can_use_pos: !!all[idx].can_create_tickets,
+                can_manage_tournaments: !!all[idx].can_manage_tournaments,
+                can_view_finances: !!all[idx].can_view_finance,
+                can_edit_landing: !!all[idx].can_edit_landing,
+              },
+            });
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      return all[idx];
+    }
+    throw new Error('Miembro no encontrado');
+  },
+
   removeMember(id: string) {
     const all = getStorage<TenantMember[]>(STORAGE_KEYS.MEMBERS, INITIAL_MEMBERS);
     const filtered = all.filter((m) => m.id !== id);
@@ -656,8 +685,13 @@ export const dataStore = {
 
   getCurrentUser(): UserProfile {
     const users = this.getUsers();
-    const currentId = getStorage<string>(STORAGE_KEYS.CURRENT_USER_ID, 'usr-superadmin');
-    return users.find((u) => u.id === currentId) || users[0] || INITIAL_USERS[0];
+    const currentId = getStorage<string>(STORAGE_KEYS.CURRENT_USER_ID, 'usr-regular');
+    return (
+      users.find((u) => u.id === currentId) ||
+      users.find((u) => u.role === 'regular_user') ||
+      users[0] ||
+      INITIAL_USERS[0]
+    );
   },
 
   setCurrentUserId(id: string) {

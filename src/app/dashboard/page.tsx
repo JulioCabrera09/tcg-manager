@@ -191,6 +191,7 @@ export default function DashboardPage() {
   const [newParticipantName, setNewParticipantName] = useState('');
   const [newParticipantDeck, setNewParticipantDeck] = useState('');
   const [isCompressingImage, setIsCompressingImage] = useState(false);
+  const [isCompressingProductImage, setIsCompressingProductImage] = useState(false);
 
   // Live countdown timer for round in bracket view
   useEffect(() => {
@@ -261,8 +262,53 @@ export default function DashboardPage() {
     reader.readAsDataURL(file);
   };
 
-  // Modal: Add Team Member
+  // Client-side WebP image compression for store products (Singles, Sealed, Cafeteria, Accessories)
+  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsCompressingProductImage(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new (window as any).Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_SIZE = 800;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const webpDataUrl = canvas.toDataURL('image/webp', 0.85);
+          setEditingProduct((prev) => (prev ? { ...prev, image_url: webpDataUrl } : null));
+        }
+        setIsCompressingProductImage(false);
+      };
+      img.onerror = () => setIsCompressingProductImage(false);
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => setIsCompressingProductImage(false);
+    reader.readAsDataURL(file);
+  };
+
+  // Modal: Add / Edit Team Member & Roles
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [newMember, setNewMember] = useState({
     user_name: '',
     user_email: '',
@@ -276,6 +322,87 @@ export default function DashboardPage() {
     can_edit_landing: false,
   });
   const [memberCreatedNotice, setMemberCreatedNotice] = useState<string | null>(null);
+
+  const applyRolePreset = (preset: 'cashier' | 'judge' | 'inventory' | 'admin') => {
+    if (preset === 'cashier') {
+      setNewMember((prev) => ({
+        ...prev,
+        role: 'editor',
+        can_delete_inventory: false,
+        can_edit_inventory: false,
+        can_manage_tournaments: false,
+        can_view_finance: false,
+        can_create_tickets: true,
+        can_edit_landing: false,
+      }));
+    } else if (preset === 'judge') {
+      setNewMember((prev) => ({
+        ...prev,
+        role: 'viewer',
+        can_delete_inventory: false,
+        can_edit_inventory: false,
+        can_manage_tournaments: true,
+        can_view_finance: false,
+        can_create_tickets: false,
+        can_edit_landing: false,
+      }));
+    } else if (preset === 'inventory') {
+      setNewMember((prev) => ({
+        ...prev,
+        role: 'editor',
+        can_delete_inventory: true,
+        can_edit_inventory: true,
+        can_manage_tournaments: false,
+        can_view_finance: false,
+        can_create_tickets: false,
+        can_edit_landing: false,
+      }));
+    } else if (preset === 'admin') {
+      setNewMember((prev) => ({
+        ...prev,
+        role: 'admin',
+        can_delete_inventory: true,
+        can_edit_inventory: true,
+        can_manage_tournaments: true,
+        can_view_finance: true,
+        can_create_tickets: true,
+        can_edit_landing: true,
+      }));
+    }
+  };
+
+  const handleEditMember = (member: TenantMember) => {
+    setEditingMemberId(member.id);
+    setNewMember({
+      user_name: member.user_name || '',
+      user_email: member.user_email || '',
+      password: '',
+      role: member.role,
+      can_delete_inventory: member.can_delete_inventory || false,
+      can_edit_inventory: member.can_edit_inventory || false,
+      can_manage_tournaments: member.can_manage_tournaments || false,
+      can_view_finance: member.can_view_finance || false,
+      can_create_tickets: member.can_create_tickets || false,
+      can_edit_landing: member.can_edit_landing || false,
+    });
+    setIsMemberModalOpen(true);
+  };
+
+  const resetMemberForm = () => {
+    setEditingMemberId(null);
+    setNewMember({
+      user_name: '',
+      user_email: '',
+      password: '',
+      role: 'editor',
+      can_delete_inventory: false,
+      can_edit_inventory: true,
+      can_manage_tournaments: true,
+      can_view_finance: false,
+      can_create_tickets: true,
+      can_edit_landing: false,
+    });
+  };
 
   // Settings Phone / WhatsApp strict 10 digits & Storefront Customization
   const [settingsName, setSettingsName] = useState<string>('');
@@ -942,6 +1069,26 @@ export default function DashboardPage() {
     if (!newMember.user_name.trim()) return;
 
     try {
+      if (editingMemberId) {
+        dataStore.updateMember(editingMemberId, {
+          role: newMember.role,
+          user_name: newMember.user_name,
+          user_email: newMember.user_email,
+          can_delete_inventory: newMember.can_delete_inventory,
+          can_edit_inventory: newMember.can_edit_inventory,
+          can_manage_tournaments: newMember.can_manage_tournaments,
+          can_view_finance: newMember.can_view_finance,
+          can_create_tickets: newMember.can_create_tickets,
+          can_edit_landing: newMember.can_edit_landing,
+        });
+
+        setMemberCreatedNotice(`¡Permisos y rol de "${newMember.user_name}" actualizados con éxito!`);
+        setIsMemberModalOpen(false);
+        resetMemberForm();
+        refreshCurrentData();
+        return;
+      }
+
       const rawPassword = newMember.password || 'tcg2026';
       const hashedPassword = await hashPassword(rawPassword);
 
@@ -981,18 +1128,7 @@ export default function DashboardPage() {
       );
 
       setIsMemberModalOpen(false);
-      setNewMember({
-        user_name: '',
-        user_email: '',
-        password: '',
-        role: 'editor',
-        can_delete_inventory: false,
-        can_edit_inventory: true,
-        can_manage_tournaments: true,
-        can_view_finance: false,
-        can_create_tickets: true,
-        can_edit_landing: false,
-      });
+      resetMemberForm();
       refreshCurrentData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error al registrar colaborador';
@@ -1284,80 +1420,86 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* Tab Navigation with strict Role & Permission gating */}
-      <div className="bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex overflow-x-auto gap-2 py-2">
-          {(() => {
-            const isStaff = currentUser.role === 'store_staff';
-            const staffPerms = currentUser.staff_permissions;
+      {/* Tab Navigation with strict Role & Permission gating - 2 clean rows of 4 tabs */}
+      <div className="bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 py-3">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+            {(() => {
+              const isStaff = currentUser.role === 'store_staff';
+              const staffPerms = currentUser.staff_permissions;
 
-            const tabCandidates = [
-              (!isStaff || staffPerms?.can_manage_inventory !== false) && {
-                id: 'inventory',
-                label: 'Inventario Universal',
-                icon: Layers,
-              },
-              (!isStaff || staffPerms?.can_use_pos !== false) && {
-                id: 'pos',
-                label: 'Punto de Venta (POS)',
-                icon: DollarSign,
-              },
-              {
-                id: 'reservations',
-                label: `Reservas Web (${orders.filter((o) => o.status === 'pending_pickup').length})`,
-                icon: ShoppingBag,
-              },
-              (!isStaff || staffPerms?.can_manage_tournaments !== false) && {
-                id: 'tournaments',
-                label: `Torneos (${tournaments.length})`,
-                icon: Trophy,
-              },
-              (!isStaff || staffPerms?.can_view_finances === true) && {
-                id: 'reports',
-                label: 'Finanzas & Tickets',
-                icon: TrendingUp,
-              },
-              !isStaff && {
-                id: 'team',
-                label: `Empleados y Roles (${members.length})`,
-                icon: Users,
-              },
-              (!isStaff || staffPerms?.can_edit_landing === true) && {
-                id: 'settings',
-                label: 'Ajustes & Storefront',
-                icon: Settings,
-              },
-              !isStaff && {
-                id: 'support',
-                label: `Soporte Super Admin (${supportMessages.length})`,
-                icon: MessageSquare,
-              },
-            ].filter(Boolean) as {
-              id: typeof activeTab;
-              label: string;
-              icon: React.ComponentType<{ className?: string }>;
-            }[];
+              const tabCandidates = [
+                (!isStaff || staffPerms?.can_manage_inventory !== false) && {
+                  id: 'inventory',
+                  label: 'Inventario Universal',
+                  icon: Layers,
+                },
+                (!isStaff || staffPerms?.can_use_pos !== false) && {
+                  id: 'pos',
+                  label: 'Punto de Venta (POS)',
+                  icon: DollarSign,
+                },
+                {
+                  id: 'reservations',
+                  label: `Reservas Web (${orders.filter((o) => o.status === 'pending_pickup').length})`,
+                  icon: ShoppingBag,
+                },
+                (!isStaff || staffPerms?.can_manage_tournaments !== false) && {
+                  id: 'tournaments',
+                  label: `Torneos (${tournaments.length})`,
+                  icon: Trophy,
+                },
+                (!isStaff || staffPerms?.can_view_finances === true) && {
+                  id: 'reports',
+                  label: 'Finanzas & Tickets',
+                  icon: TrendingUp,
+                },
+                !isStaff && {
+                  id: 'team',
+                  label: `Empleados y Roles (${members.length})`,
+                  icon: Users,
+                },
+                (!isStaff || staffPerms?.can_edit_landing === true) && {
+                  id: 'settings',
+                  label: 'Ajustes & Storefront',
+                  icon: Settings,
+                },
+                !isStaff && {
+                  id: 'support',
+                  label: `Soporte Super Admin (${supportMessages.length})`,
+                  icon: MessageSquare,
+                },
+              ].filter(Boolean) as {
+                id: typeof activeTab;
+                label: string;
+                icon: React.ComponentType<{ className?: string }>;
+              }[];
 
-            return tabCandidates.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
-                    isActive
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-900'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {tab.label}
-                </button>
-              );
-            });
-          })()}
+              return tabCandidates.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`px-3 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center sm:justify-start gap-2 transition cursor-pointer border ${
+                      isActive
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-slate-300 dark:hover:border-slate-700'
+                    }`}
+                  >
+                    <Icon
+                      className={`w-4 h-4 shrink-0 ${
+                        isActive ? 'text-white' : 'text-blue-600 dark:text-blue-400'
+                      }`}
+                    />
+                    <span className="truncate">{tab.label}</span>
+                  </button>
+                );
+              });
+            })()}
+          </div>
         </div>
       </div>
 
@@ -2922,7 +3064,10 @@ export default function DashboardPage() {
 
                 <button
                   type="button"
-                  onClick={() => setIsMemberModalOpen(true)}
+                  onClick={() => {
+                    resetMemberForm();
+                    setIsMemberModalOpen(true);
+                  }}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
                 >
                   <Plus className="w-4 h-4" />
@@ -2986,19 +3131,29 @@ export default function DashboardPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (confirm(`¿Eliminar la cuenta de colaborador de ${m.user_name}?`)) {
-                              dataStore.removeMember(m.id);
-                              refreshCurrentData();
-                            }
-                          }}
-                          className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer transition"
-                          title="Eliminar colaborador"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleEditMember(m)}
+                            className="text-slate-400 hover:text-blue-600 p-1 cursor-pointer transition"
+                            title="Editar rol y permisos"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`¿Eliminar la cuenta de colaborador de ${m.user_name}?`)) {
+                                dataStore.removeMember(m.id);
+                                refreshCurrentData();
+                              }
+                            }}
+                            className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer transition"
+                            title="Eliminar colaborador"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -3452,17 +3607,28 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-slate-700 dark:text-slate-300 font-semibold">
-                        Código de Barras
+                      <label className="text-slate-700 dark:text-slate-300 font-semibold flex items-center gap-1">
+                        Código de Barras <span className="text-slate-400 font-normal text-[11px]">(Opcional)</span>
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => setShowNameSearch(!showNameSearch)}
-                        className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        <Search className="w-2.5 h-2.5" />
-                        {showNameSearch ? 'Cerrar buscador' : 'Buscar por nombre'}
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        {editingProduct.barcode && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingProduct({ ...editingProduct, barcode: '' })}
+                            className="text-[10px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                          >
+                            Quitar código
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowNameSearch(!showNameSearch)}
+                          className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Search className="w-2.5 h-2.5" />
+                          {showNameSearch ? 'Cerrar' : 'Buscar nombre'}
+                        </button>
+                      </div>
                     </div>
                     <div className="flex gap-1.5">
                       <input
@@ -3477,7 +3643,7 @@ export default function DashboardPage() {
                             handleLookupBarcode();
                           }
                         }}
-                        placeholder="Ej. 7501011143586 o escanear"
+                        placeholder="Opcional: 7501011143586 o pistola"
                         className="flex-1 px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono text-xs"
                       />
                       <button
@@ -3498,7 +3664,7 @@ export default function DashboardPage() {
                       </button>
                     </div>
                     <p className="text-[10px] text-slate-400 mt-1">
-                      Escanea con pistola USB o pulsa Enter para autocompletar
+                      Para hamburguesas, botanas o comida casera, déjalo vacío sin problema.
                     </p>
                   </div>
 
@@ -3816,23 +3982,48 @@ export default function DashboardPage() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-slate-700 dark:text-slate-300 block font-semibold">
-                  URL de Imagen (Autocompletada por API u opcional)
-                </label>
-                <input
-                  type="url"
-                  value={editingProduct.image_url || ''}
-                  onChange={(e) =>
-                    setEditingProduct({ ...editingProduct, image_url: e.target.value })
-                  }
-                  placeholder="https://..."
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono text-[11px]"
-                />
+              <div className="space-y-2.5 p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <label className="text-slate-700 dark:text-slate-300 font-semibold block text-xs">
+                    Fotografía del Producto (Subir Archivo o URL)
+                  </label>
+                  <label className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition">
+                    <Camera className="w-3.5 h-3.5" />
+                    {isCompressingProductImage ? 'Convirtiendo a WebP...' : 'Subir Foto (Auto WebP)'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProductImageUpload}
+                      className="hidden"
+                      disabled={isCompressingProductImage}
+                    />
+                  </label>
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={editingProduct.image_url || ''}
+                    onChange={(e) =>
+                      setEditingProduct({ ...editingProduct, image_url: e.target.value })
+                    }
+                    placeholder="O escribe/pega una URL: https://..."
+                    className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white font-mono text-[11px]"
+                  />
+                  {editingProduct.image_url && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingProduct({ ...editingProduct, image_url: '' })}
+                      className="px-2.5 py-1 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg text-xs font-semibold cursor-pointer"
+                    >
+                      Quitar
+                    </button>
+                  )}
+                </div>
 
                 {editingProduct.image_url && (
-                  <div className="flex items-center gap-3 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 animate-fade-in">
-                    <div className="w-14 h-14 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden flex items-center justify-center relative shrink-0">
+                  <div className="flex items-center gap-3 p-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 animate-fade-in">
+                    <div className="w-14 h-14 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center relative shrink-0">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={editingProduct.image_url}
@@ -3842,10 +4033,10 @@ export default function DashboardPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 block uppercase tracking-wider">
-                        Foto Oficial Vinculada
+                        Imagen en Formato WebP Vinculada
                       </span>
                       <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
-                        {editingProduct.name || 'Producto'}
+                        {editingProduct.name || 'Producto de Tienda'}
                       </p>
                     </div>
                   </div>
@@ -4220,20 +4411,31 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Team Member Creation Modal */}
+      {/* Team Member Creation / Editing Modal */}
       {isMemberModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">Nuevo Miembro del Equipo</h3>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  {editingMemberId ? 'Editar Rol y Permisos de Empleado' : 'Nuevo Miembro del Equipo'}
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  {editingMemberId ? 'Modifica los accesos o contraseña del colaborador' : 'Crea una cuenta para tu personal con accesos específicos'}
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={() => setIsMemberModalOpen(false)}
+                onClick={() => {
+                  setIsMemberModalOpen(false);
+                  resetMemberForm();
+                }}
                 className="text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
+
             <form onSubmit={handleSaveMember} className="space-y-3.5 text-xs">
               <div>
                 <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">Nombre Completo *</label>
@@ -4246,6 +4448,7 @@ export default function DashboardPage() {
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
                 />
               </div>
+
               <div>
                 <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">
                   Correo Electrónico de Acceso *
@@ -4262,22 +4465,61 @@ export default function DashboardPage() {
 
               <div>
                 <label className="text-slate-700 dark:text-slate-300 block mb-1 font-semibold">
-                  Contraseña Inicial de Acceso *
+                  {editingMemberId
+                    ? 'Nueva Contraseña (Opcional, dejar vacía para conservar actual)'
+                    : 'Contraseña Inicial de Acceso *'}
                 </label>
                 <div className="relative">
                   <Key className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input
                     type="password"
-                    required
+                    required={!editingMemberId}
                     value={newMember.password}
                     onChange={(e) => setNewMember({ ...newMember, password: e.target.value })}
-                    placeholder="Contraseña segura (ej. Staff2026!)"
+                    placeholder={editingMemberId ? '••••••••' : 'Contraseña segura (ej. Staff2026!)'}
                     className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white"
                   />
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  Se hasheará de forma segura con SHA-256. El colaborador iniciará sesión en /tienda/{currentTenant.slug}/login
+                  Se hashea con SHA-256. El colaborador inicia sesión en /tienda/{currentTenant.slug}/login
                 </p>
+              </div>
+
+              {/* Plantillas Rápidas de Rol */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <span className="font-bold text-slate-900 dark:text-white block text-[11px]">
+                  Plantillas Rápidas de Rol (1-Click):
+                </span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => applyRolePreset('cashier')}
+                    className="px-2.5 py-1.5 bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 rounded-lg text-[11px] font-bold hover:bg-purple-100 dark:hover:bg-purple-900/40 transition cursor-pointer text-left"
+                  >
+                    💳 Cajero POS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyRolePreset('judge')}
+                    className="px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 rounded-lg text-[11px] font-bold hover:bg-amber-100 dark:hover:bg-amber-900/40 transition cursor-pointer text-left"
+                  >
+                    🏆 Juez Torneos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyRolePreset('inventory')}
+                    className="px-2.5 py-1.5 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg text-[11px] font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition cursor-pointer text-left"
+                  >
+                    📦 Almacén / Stock
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyRolePreset('admin')}
+                    className="px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-lg text-[11px] font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition cursor-pointer text-left"
+                  >
+                    👑 Administrador
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -4361,7 +4603,10 @@ export default function DashboardPage() {
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setIsMemberModalOpen(false)}
+                  onClick={() => {
+                    setIsMemberModalOpen(false);
+                    resetMemberForm();
+                  }}
                   className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl cursor-pointer"
                 >
                   Cancelar
@@ -4370,7 +4615,7 @@ export default function DashboardPage() {
                   type="submit"
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer"
                 >
-                  Guardar Empleado
+                  {editingMemberId ? 'Guardar Cambios' : 'Crear Colaborador'}
                 </button>
               </div>
             </form>
